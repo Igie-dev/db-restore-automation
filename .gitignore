@@ -1,0 +1,58 @@
+# Credentials
+.env
+.env.*
+!.env.example
+*.pgpass
+.pgpass
+pgpass.conf
+.my.cnf
+my.cnf
+my.ini
+*.cnf
+*.ora
+ewallet.p12
+cwallet.sso
+*.kdb
+*.sso
+*.wallet
+wallet/
+credentials/
+secrets/
+
+# Backup files
+*.sql
+*.sql.gz
+*.dump
+*.backup
+*.dmp
+*.bak
+*.backup.gz
+*.tar
+*.tar.gz
+*.zip
+*.7z
+*.rar
+!examples/*.yml
+!config/*.yml
+
+# Logs
+logs/*
+!logs/.gitkeep
+*.log
+
+# Temp restore files
+tmp/*
+temp/*
+restore-tmp/
+*.tmp
+*.temp
+*.restore
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+.codex
+./graphify-out

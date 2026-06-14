@@ -1,0 +1,13 @@
+# Sample RMAN command file for db-restore-automation.
+# This file is intentionally not a complete production recovery runbook.
+# An Oracle DBA must review, approve, and replace this file with the exact
+# restore and recovery commands for the target database.
+
+RUN {
+  # Example placeholders only:
+  # STARTUP NOMOUNT;
+  # RESTORE CONTROLFILE FROM AUTOBACKUP;
+  # ALTER DATABASE MOUNT;
+  # RESTORE DATABASE;
+  # RECOVER DATABASE;
+}
