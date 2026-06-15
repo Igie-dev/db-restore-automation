@@ -1,11 +1,22 @@
 package restore
 
-import "io"
+import (
+	"fmt"
+	"io"
+)
 
-func ioReader(value any) io.Reader {
+func ioReader(value any) (io.Reader, error) {
 	if value == nil {
-		return nil
+		return nil, nil
 	}
-	reader, _ := value.(io.Reader)
-	return reader
+
+	reader, ok := value.(io.Reader)
+	if !ok {
+		return nil, fmt.Errorf(
+			"invalid command input type %T: expected io.Reader",
+			value,
+		)
+	}
+
+	return reader, nil
 }

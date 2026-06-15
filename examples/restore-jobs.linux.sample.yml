@@ -1,6 +1,16 @@
-# Restore-only job configuration for Linux with the Go CLI.
+# Restore-only job configuration for Linux or WSL.
+#
 # Do not store database passwords in this file.
-# Use .pgpass, MySQL login path/defaults file, Oracle Wallet, RMAN OS auth, or PowerProtect lockbox.
+# Use:
+#   - PostgreSQL .pgpass
+#   - MySQL option/defaults file
+#   - Oracle Wallet
+#   - Platform-specific credential stores
+#
+# Important:
+# Paths beginning with /mnt/c are WSL paths.
+# For native Linux, replace them with native Linux paths such as:
+# /opt/db-restore-orchestrator/backups
 
 tools:
   postgres:
@@ -14,12 +24,6 @@ tools:
 
   oracle:
     impdp: "impdp"
-
-  oracle_rman:
-    rman: "/u01/app/oracle/product/19c/dbhome_1/bin/rman"
-
-  mssql_powerprotect:
-    ddbmsqlrc: "ddbmsqlrc"
 
 alerts:
   enabled: false
@@ -44,187 +48,90 @@ alerts:
       - "it-team@company.com"
 
 jobs:
-- name: WideWorldImporters
-  enabled: false
-  type: mssql_powerprotect
-
-  schedule:
-    enabled: false
-    linux_cron: ""
-    windows_time: "03:00"
-    windows_frequency: "DAILY"
-
-  powerprotect:
-    dd_host: "192.168.20.251"
-    dd_user: "sql-ppdm-user"
-    device_path: "/sql-ppdm-user/sample-device-path"
-    lockbox_path: "/opt/dpsapps/common/lockbox"
-    client: "source-sql-server.domain.local"
-    skip_client_resolution: true
-    restore_type: "normal"
-    credential_method: "lockbox"
-
-  source:
-    database: "WideWorldImporters"
-
-  target:
-    database: "WideWorldImporters_Test"
-
-  relocate:
-  - logical_name: "WWI_InMemory_Data_1"
-    physical_path: "/var/opt/mssql/data/WideWorldImporters_Test_InMemory_Data_1"
-  - logical_name: "WWI_Log"
-    physical_path: "/var/opt/mssql/data/WideWorldImporters_Test.ldf"
-  - logical_name: "WWI_Primary"
-    physical_path: "/var/opt/mssql/data/WideWorldImporters_Test.mdf"
-  - logical_name: "WWI_UserData"
-    physical_path: "/var/opt/mssql/data/WideWorldImporters_Test_UserData.ndf"
-
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
-
-- name: OracleRmanTestRestore
-  enabled: false
-  type: oracle_rman
-
-  schedule:
-    enabled: false
-    linux_cron: "0 4 * * *"
-    windows_time: "04:00"
-    windows_frequency: "DAILY"
-
-  rman:
-    target: "/"
-    catalog: ""
-    command_file: "/opt/db-restore-automation/rman/restore-full-database.sample.rman"
-    log_file: "/opt/db-restore-automation/logs/oracle-rman-restore.log"
-    credential_method: "os_auth"
-    oracle_home: "/u01/app/oracle/product/19c/dbhome_1"
-    oracle_sid: "ORCLTEST"
-    restore_scope: "full_database"
-
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
-
-- name: AdventureWorks
-  enabled: false
-  type: mssql_powerprotect
-
-  schedule:
-    enabled: false
-    linux_cron: ""
-    windows_time: "03:30"
-    windows_frequency: "DAILY"
-
-  powerprotect:
-    dd_host: "192.168.20.251"
-    dd_user: "sql-ppdm-user"
-    device_path: "/sql-ppdm-user/sample-device-path"
-    lockbox_path: "/opt/dpsapps/common/lockbox"
-    client: "source-sql-server.domain.local"
-    skip_client_resolution: true
-    restore_type: "normal"
-    credential_method: "lockbox"
-
-  source:
-    database: "AdventureWorks"
-
-  target:
-    database: "AdventureWorks_Test"
-
-  relocate:
-  - logical_name: "AdventureWorks"
-    physical_path: "/var/opt/mssql/data/AdventureWorks_Test.mdf"
-  - logical_name: "AdventureWorks_log"
-    physical_path: "/var/opt/mssql/data/AdventureWorks_Test_log.ldf"
-
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
-
-- name: hris_postgres_test
-  enabled: true
-  type: postgres
-  backup_path: "/mnt/shared/backups/postgres/hris"
-  file_pattern: "*.sql"
-
-  schedule:
+  - name: hris_postgres_restore
     enabled: true
-    linux_cron: "0 3 * * *"
-    windows_time: "03:00"
-    windows_frequency: "DAILY"
+    type: postgres
 
-  target:
-    host: "localhost"
-    port: 5432
-    database: "hris_test"
-    username: "postgres"
-    credential_method: "pgpass"
-    maintenance_database: "postgres"
+    backup_path: "/mnt/c/Projects/db-backups"
+    file_pattern: "*.sql"
 
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
+    schedule:
+      enabled: true
+      linux_cron: "0 3 * * *"
 
-- name: inventory_mysql_test
-  enabled: false
-  type: mysql
-  backup_path: "/mnt/shared/backups/mysql/inventory"
-  file_pattern: "*.sql.gz"
+      # These Windows fields are retained because the current shared
+      # configuration validator requires them when scheduling is enabled.
+      windows_time: "03:00"
+      windows_frequency: "DAILY"
 
-  schedule:
+    target:
+      host: "localhost"
+      port: 5432
+      database: "hris_test"
+      username: "postgres"
+      maintenance_database: "postgres"
+      credential_method: "pgpass"
+
+    safety:
+      require_confirmation: false
+      block_if_name_contains:
+        - "prod"
+        - "production"
+        - "live"
+
+  - name: inventory_mysql_restore
     enabled: false
-    linux_cron: "30 3 * * *"
-    windows_time: "03:30"
-    windows_frequency: "DAILY"
+    type: mysql
 
-  target:
-    database: "inventory_test"
-    credential_method: "defaults_file"
-    defaults_file: "/etc/db-orchestration/mysql-inventory.cnf"
+    backup_path: "/mnt/c/Projects/db-backups"
+    file_pattern: "*.sql.gz"
 
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
+    schedule:
+      enabled: false
+      linux_cron: "30 3 * * *"
+      windows_time: "03:30"
+      windows_frequency: "DAILY"
 
-- name: accounting_oracle_test
-  enabled: false
-  type: oracle
-  backup_path: "/mnt/shared/backups/oracle/accounting"
-  file_pattern: "*.dmp"
+    target:
+      host: "localhost"
+      port: 3306
+      database: "inventory_test"
+      username: "mysql_restore"
+      credential_method: "defaults_file"
 
-  schedule:
+      # This must be an actual file, not a directory.
+      # Create this file before enabling the MySQL job.
+      defaults_file: "/etc/db-restore-orchestrator/mysql.cnf"
+
+    safety:
+      require_confirmation: false
+      block_if_name_contains:
+        - "prod"
+        - "production"
+        - "live"
+
+  - name: accounting_oracle_restore
     enabled: false
-    linux_cron: "0 4 * * *"
-    windows_time: "04:00"
-    windows_frequency: "DAILY"
+    type: oracle
 
-  target:
-    connect_string: "/@ACCOUNTING_TEST"
-    schema: "ACCOUNTING_TEST"
-    oracle_directory: "ORCH_DUMP_DIR"
-    credential_method: "oracle_wallet"
+    backup_path: "/mnt/c/Projects/db-backups"
+    file_pattern: "*.dmp"
 
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
+    schedule:
+      enabled: false
+      linux_cron: "0 4 * * *"
+      windows_time: "04:00"
+      windows_frequency: "DAILY"
+
+    target:
+      connect_string: "/@ACCOUNTING_TEST"
+      schema: "ACCOUNTING_TEST"
+      oracle_directory: "ORCH_DUMP_DIR"
+      credential_method: "oracle_wallet"
+
+    safety:
+      require_confirmation: false
+      block_if_name_contains:
+        - "prod"
+        - "production"
+        - "live"

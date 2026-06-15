@@ -1,6 +1,17 @@
-# Restore-only job configuration for Windows with the Go CLI.
+# Restore-only job configuration for Windows.
+#
 # Do not store database passwords in this file.
-# Use pgpass.conf, MySQL login path/defaults file, Oracle Wallet, RMAN OS auth, or Dell PowerProtect lockbox.
+# Use:
+#   - PostgreSQL pgpass.conf
+#   - MySQL login path or defaults file
+#   - Oracle Wallet
+#   - Dell PowerProtect lockbox
+#
+# PostgreSQL pgpass.conf is normally located at:
+#   %APPDATA%\postgresql\pgpass.conf
+#
+# MySQL login paths can be configured with:
+#   mysql_config_editor set --login-path=inventory_test ...
 
 tools:
   postgres:
@@ -10,13 +21,12 @@ tools:
     createdb: "C:\\Program Files\\PostgreSQL\\18\\bin\\createdb.exe"
 
   mysql:
-    mysql: "mysql"
+    # Replace with the full path if mysql.exe is not available in the
+    # PATH of the Windows Task Scheduler service account.
+    mysql: "mysql.exe"
 
   oracle:
-    impdp: "impdp"
-
-  oracle_rman:
-    rman: "C:\\oracle\\product\\19c\\dbhome_1\\bin\\rman.exe"
+    impdp: "C:\\oracle\\product\\19c\\dbhome_1\\bin\\impdp.exe"
 
   mssql_powerprotect:
     ddbmsqlrc: "C:\\Program Files\\DPSAPPS\\MSAPPAGENT\\bin\\ddbmsqlrc.exe"
@@ -44,187 +54,170 @@ alerts:
       - "it-team@company.com"
 
 jobs:
-- name: WideWorldImporters
-  enabled: false
-  type: mssql_powerprotect
-
-  schedule:
-    enabled: false
-    linux_cron: ""
-    windows_time: "03:00"
-    windows_frequency: "DAILY"
-
-  powerprotect:
-    dd_host: "192.168.20.251"
-    dd_user: "sql-ppdm-user"
-    device_path: "/sql-ppdm-user/sample-device-path"
-    lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
-    client: "source-sql-server.domain.local"
-    skip_client_resolution: true
-    restore_type: "normal"
-    credential_method: "lockbox"
-
-  source:
-    database: "WideWorldImporters"
-
-  target:
-    database: "WideWorldImporters_Test"
-
-  relocate:
-  - logical_name: "WWI_InMemory_Data_1"
-    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test_InMemory_Data_1"
-  - logical_name: "WWI_Log"
-    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test.ldf"
-  - logical_name: "WWI_Primary"
-    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test.mdf"
-  - logical_name: "WWI_UserData"
-    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test_UserData.ndf"
-
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
-
-- name: OracleRmanTestRestore
-  enabled: false
-  type: oracle_rman
-
-  schedule:
-    enabled: false
-    linux_cron: "0 4 * * *"
-    windows_time: "04:00"
-    windows_frequency: "DAILY"
-
-  rman:
-    target: "/"
-    catalog: ""
-    command_file: "C:\\db-restore-automation\\rman\\restore-full-database.sample.rman"
-    log_file: "C:\\db-restore-automation\\logs\\oracle-rman-restore.log"
-    credential_method: "os_auth"
-    oracle_home: "C:\\oracle\\product\\19c\\dbhome_1"
-    oracle_sid: "ORCLTEST"
-    restore_scope: "full_database"
-
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
-
-- name: AdventureWorks
-  enabled: false
-  type: mssql_powerprotect
-
-  schedule:
-    enabled: false
-    linux_cron: ""
-    windows_time: "03:30"
-    windows_frequency: "DAILY"
-
-  powerprotect:
-    dd_host: "192.168.20.251"
-    dd_user: "sql-ppdm-user"
-    device_path: "/sql-ppdm-user/sample-device-path"
-    lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
-    client: "source-sql-server.domain.local"
-    skip_client_resolution: true
-    restore_type: "normal"
-    credential_method: "lockbox"
-
-  source:
-    database: "AdventureWorks"
-
-  target:
-    database: "AdventureWorks_Test"
-
-  relocate:
-  - logical_name: "AdventureWorks"
-    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test.mdf"
-  - logical_name: "AdventureWorks_log"
-    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test_log.ldf"
-
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
-
-- name: hris_postgres_test
-  enabled: true
-  type: postgres
-  backup_path: "C:\\Projects\\db-backups"
-  file_pattern: "*.sql"
-
-  schedule:
+  - name: WideWorldImportersRestore
     enabled: true
-    linux_cron: "0 3 * * *"
-    windows_time: "14:30"
-    windows_frequency: "DAILY"
+    type: mssql_powerprotect
 
-  target:
-    host: "localhost"
-    port: 5432
-    database: "hris_test"
-    username: "postgres"
-    credential_method: "pgpass"
-    maintenance_database: "postgres"
+    schedule:
+      enabled: true
+      linux_cron: ""
+      windows_time: "03:00"
+      windows_frequency: "DAILY"
 
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
+    powerprotect:
+      dd_host: "192.168.20.251"
+      dd_user: "sql-ppdm-user"
+      device_path: "/sql-ppdm-user/sample-device-path"
+      lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
+      client: "source-sql-server.domain.local"
+      skip_client_resolution: true
+      restore_type: "normal"
+      credential_method: "lockbox"
 
-- name: inventory_mysql_test
-  enabled: false
-  type: mysql
-  backup_path: "C:\\Projects\\db-backups\\mysql\\inventory"
-  file_pattern: "*.sql.gz"
+    source:
+      database: "WideWorldImporters"
 
-  schedule:
-    enabled: false
-    linux_cron: "30 3 * * *"
-    windows_time: "03:30"
-    windows_frequency: "DAILY"
+    target:
+      database: "WideWorldImporters_Test"
 
-  target:
-    database: "inventory_test"
-    credential_method: "login_path"
-    login_path: "inventory_test"
+    relocate:
+      - logical_name: "WWI_InMemory_Data_1"
+        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test_InMemory_Data_1"
 
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
+      - logical_name: "WWI_Log"
+        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test.ldf"
 
-- name: accounting_oracle_test
-  enabled: false
-  type: oracle
-  backup_path: "C:\\Projects\\db-backups\\oracle\\accounting"
-  file_pattern: "*.dmp"
+      - logical_name: "WWI_Primary"
+        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test.mdf"
 
-  schedule:
-    enabled: false
-    linux_cron: "0 4 * * *"
-    windows_time: "04:00"
-    windows_frequency: "DAILY"
+      - logical_name: "WWI_UserData"
+        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test_UserData.ndf"
 
-  target:
-    connect_string: "/@ACCOUNTING_TEST"
-    schema: "ACCOUNTING_TEST"
-    oracle_directory: "ORCH_DUMP_DIR"
-    credential_method: "oracle_wallet"
+    safety:
+      require_confirmation: false
+      block_if_name_contains:
+        - "prod"
+        - "production"
+        - "live"
 
-  safety:
-    require_confirmation: false
-    block_if_name_contains:
-    - prod
-    - production
-    - live
+  - name: AdventureWorksRestore
+    enabled: true
+    type: mssql_powerprotect
+
+    schedule:
+      enabled: true
+      linux_cron: ""
+      windows_time: "03:30"
+      windows_frequency: "DAILY"
+
+    powerprotect:
+      dd_host: "192.168.20.251"
+      dd_user: "sql-ppdm-user"
+      device_path: "/sql-ppdm-user/sample-device-path"
+      lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
+      client: "source-sql-server.domain.local"
+      skip_client_resolution: true
+      restore_type: "normal"
+      credential_method: "lockbox"
+
+    source:
+      database: "AdventureWorks"
+
+    target:
+      database: "AdventureWorks_Test"
+
+    relocate:
+      - logical_name: "AdventureWorks"
+        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test.mdf"
+
+      - logical_name: "AdventureWorks_log"
+        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test_log.ldf"
+
+    safety:
+      require_confirmation: false
+      block_if_name_contains:
+        - "prod"
+        - "production"
+        - "live"
+
+  - name: hris_postgres_restore
+    enabled: true
+    type: postgres
+
+    backup_path: "C:\\Projects\\db-backups"
+    file_pattern: "*.sql"
+
+    schedule:
+      enabled: true
+      linux_cron: ""
+      windows_time: "14:30"
+      windows_frequency: "DAILY"
+
+    target:
+      host: "localhost"
+      port: 5432
+      database: "hris_test"
+      username: "postgres"
+      maintenance_database: "postgres"
+      credential_method: "pgpass"
+
+    safety:
+      require_confirmation: false
+      block_if_name_contains:
+        - "prod"
+        - "production"
+        - "live"
+
+  - name: inventory_mysql_restore
+    enabled: true
+    type: mysql
+
+    backup_path: "C:\\Projects\\db-backups\\mysql\\inventory"
+    file_pattern: "*.sql.gz"
+
+    schedule:
+      enabled: true
+      linux_cron: ""
+      windows_time: "03:30"
+      windows_frequency: "DAILY"
+
+    target:
+      host: "localhost"
+      port: 3306
+      database: "inventory_test"
+      username: "inventory_restore"
+      credential_method: "login_path"
+      login_path: "inventory_test"
+
+    safety:
+      require_confirmation: false
+      block_if_name_contains:
+        - "prod"
+        - "production"
+        - "live"
+
+  - name: accounting_oracle_restore
+    enabled: true
+    type: oracle
+
+    backup_path: "C:\\Projects\\db-backups\\oracle\\accounting"
+    file_pattern: "*.dmp"
+
+    schedule:
+      enabled: true
+      linux_cron: ""
+      windows_time: "04:00"
+      windows_frequency: "DAILY"
+
+    target:
+      connect_string: "/@ACCOUNTING_TEST"
+      schema: "ACCOUNTING_TEST"
+      oracle_directory: "ORCH_DUMP_DIR"
+      credential_method: "oracle_wallet"
+
+    safety:
+      require_confirmation: false
+      block_if_name_contains:
+        - "prod"
+        - "production"
+        - "live"

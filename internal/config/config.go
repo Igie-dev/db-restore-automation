@@ -3,13 +3,20 @@ package config
 import "strings"
 
 const (
-	TypePostgres           = "postgres"
-	TypeMySQL              = "mysql"
-	TypeOracle             = "oracle"
-	TypeOracleRMAN         = "oracle_rman"
-	TypeMSSQLPowerProtect  = "mssql_powerprotect"
+	TypePostgres          = "postgres"
+	TypeMySQL             = "mysql"
+	TypeOracle            = "oracle"
+	TypeOracleRMAN        = "oracle_rman"
+	TypeMSSQLPowerProtect = "mssql_powerprotect"
+
 	DefaultRMANScope       = "full_database"
 	DefaultPowerProtectRun = "normal"
+
+	DefaultPostgresCredentialMethod    = "pgpass"
+	DefaultMySQLCredentialMethod       = "defaults_file"
+	DefaultOracleCredentialMethod      = "oracle_wallet"
+	DefaultOracleRMANCredentialMethod  = "os_auth"
+	DefaultPowerProtectCredentialMethod = "lockbox"
 )
 
 type Config struct {
@@ -50,10 +57,10 @@ type MSSQLPowerProtectToolsConfig struct {
 }
 
 type AlertsConfig struct {
-	Enabled  bool              `yaml:"enabled"`
-	NotifyOn NotifyOnConfig    `yaml:"notify_on"`
-	Slack    SlackConfig       `yaml:"slack"`
-	Email    EmailConfig       `yaml:"email"`
+	Enabled  bool           `yaml:"enabled"`
+	NotifyOn NotifyOnConfig `yaml:"notify_on"`
+	Slack    SlackConfig    `yaml:"slack"`
+	Email    EmailConfig    `yaml:"email"`
 }
 
 type NotifyOnConfig struct {
@@ -78,19 +85,19 @@ type EmailConfig struct {
 }
 
 type JobConfig struct {
-	Name        string              `yaml:"name"`
-	Enabled     *bool               `yaml:"enabled"`
-	Type        string              `yaml:"type"`
-	BackupPath  string              `yaml:"backup_path"`
-	FilePattern string              `yaml:"file_pattern"`
-	Schedule    ScheduleConfig      `yaml:"schedule"`
-	Target      TargetConfig        `yaml:"target"`
-	Source      SourceConfig        `yaml:"source"`
+	Name         string              `yaml:"name"`
+	Enabled      *bool               `yaml:"enabled"`
+	Type         string              `yaml:"type"`
+	BackupPath   string              `yaml:"backup_path"`
+	FilePattern  string              `yaml:"file_pattern"`
+	Schedule     ScheduleConfig      `yaml:"schedule"`
+	Target       TargetConfig        `yaml:"target"`
+	Source       SourceConfig        `yaml:"source"`
 	PowerProtect PowerProtectConfig `yaml:"powerprotect"`
-	RMAN        RMANConfig          `yaml:"rman"`
-	Relocate    []RelocateConfig    `yaml:"relocate"`
-	Safety      SafetyConfig        `yaml:"safety"`
-	Tools       ToolsConfig         `yaml:"tools"`
+	RMAN         RMANConfig          `yaml:"rman"`
+	Relocate     []RelocateConfig    `yaml:"relocate"`
+	Safety       SafetyConfig        `yaml:"safety"`
+	Tools        ToolsConfig         `yaml:"tools"`
 }
 
 type ScheduleConfig struct {
@@ -151,7 +158,7 @@ type SafetyConfig struct {
 }
 
 func (j JobConfig) TypeName() string {
-	return strings.ToLower(strings.TrimSpace(j.Type))
+	return normalizeToken(j.Type)
 }
 
 func (j JobConfig) IsEnabled() bool {
@@ -164,115 +171,228 @@ func (j JobConfig) ScheduleEnabled() bool {
 
 func (j JobConfig) UsesBackupFile() bool {
 	switch j.TypeName() {
+	case TypePostgres, TypeMySQL, TypeOracle:
+		return true
+
 	case TypeOracleRMAN, TypeMSSQLPowerProtect:
 		return false
+
 	default:
-		return true
+		// Unknown job types must not cause the application to inspect
+		// arbitrary backup paths before configuration validation rejects them.
+		return false
 	}
 }
 
 func (j JobConfig) CredentialMethod() string {
 	switch j.TypeName() {
 	case TypePostgres:
-		return defaultString(j.Target.CredentialMethod, "pgpass")
+		return normalizeTokenWithDefault(
+			j.Target.CredentialMethod,
+			DefaultPostgresCredentialMethod,
+		)
+
 	case TypeMySQL:
-		return defaultString(j.Target.CredentialMethod, "defaults_file")
+		return normalizeTokenWithDefault(
+			j.Target.CredentialMethod,
+			DefaultMySQLCredentialMethod,
+		)
+
 	case TypeOracle:
-		return defaultString(j.Target.CredentialMethod, "oracle_wallet")
+		return normalizeTokenWithDefault(
+			j.Target.CredentialMethod,
+			DefaultOracleCredentialMethod,
+		)
+
 	case TypeOracleRMAN:
-		return defaultString(j.RMAN.CredentialMethod, "os_auth")
+		return normalizeTokenWithDefault(
+			j.RMAN.CredentialMethod,
+			DefaultOracleRMANCredentialMethod,
+		)
+
 	case TypeMSSQLPowerProtect:
-		return defaultString(j.PowerProtect.CredentialMethod, "lockbox")
+		return normalizeTokenWithDefault(
+			j.PowerProtect.CredentialMethod,
+			DefaultPowerProtectCredentialMethod,
+		)
+
 	default:
 		return ""
 	}
 }
 
 func (j JobConfig) RestoreScope() string {
-	return defaultString(j.RMAN.RestoreScope, DefaultRMANScope)
+	return normalizeTokenWithDefault(
+		j.RMAN.RestoreScope,
+		DefaultRMANScope,
+	)
 }
 
 func (j JobConfig) PowerProtectRestoreType() string {
-	return defaultString(j.PowerProtect.RestoreType, DefaultPowerProtectRun)
+	return normalizeTokenWithDefault(
+		j.PowerProtect.RestoreType,
+		DefaultPowerProtectRun,
+	)
 }
 
 func (j JobConfig) PowerProtectSkipClientResolution() bool {
-	if j.PowerProtect.SkipClientResolution == nil {
+	// Skipping client-name resolution weakens validation and must therefore
+	// only happen when it is explicitly enabled in the configuration.
+	return j.PowerProtect.SkipClientResolution != nil &&
+		*j.PowerProtect.SkipClientResolution
+}
+
+func (j JobConfig) RequiresConfirmation() bool {
+	// Destructive restores should require confirmation unless the
+	// configuration explicitly disables it.
+	if j.Safety.RequireConfirmation == nil {
 		return true
 	}
-	return *j.PowerProtect.SkipClientResolution
+
+	return *j.Safety.RequireConfirmation
 }
 
 func (j JobConfig) SourceText() string {
 	switch j.TypeName() {
 	case TypeMSSQLPowerProtect:
-		return j.Source.Database
+		return strings.TrimSpace(j.Source.Database)
+
 	case TypeOracleRMAN:
-		return j.RMAN.Target
-	default:
+		return strings.TrimSpace(j.RMAN.Target)
+
+	case TypePostgres, TypeMySQL, TypeOracle:
 		return "backup_file"
+
+	default:
+		return ""
 	}
 }
 
 func (j JobConfig) TargetText() string {
 	switch j.TypeName() {
 	case TypePostgres, TypeMySQL, TypeMSSQLPowerProtect:
-		return j.Target.Database
+		return strings.TrimSpace(j.Target.Database)
+
 	case TypeOracle:
-		return strings.TrimSpace(j.Target.Schema + " " + j.Target.ConnectString)
+		return joinNonEmpty(
+			j.Target.Schema,
+			j.Target.ConnectString,
+		)
+
 	case TypeOracleRMAN:
-		return j.RMAN.Target
+		return strings.TrimSpace(j.RMAN.Target)
+
 	default:
 		return ""
 	}
 }
 
-func (c Config) ToolPath(job JobConfig, category, name, fallback string) string {
-	if v := toolPath(job.Tools, category, name); strings.TrimSpace(v) != "" {
-		return v
+func (c Config) ToolPath(
+	job JobConfig,
+	category string,
+	name string,
+	fallback string,
+) string {
+	if value := strings.TrimSpace(
+		toolPath(job.Tools, category, name),
+	); value != "" {
+		return value
 	}
-	if v := toolPath(c.Tools, category, name); strings.TrimSpace(v) != "" {
-		return v
+
+	if value := strings.TrimSpace(
+		toolPath(c.Tools, category, name),
+	); value != "" {
+		return value
 	}
-	return fallback
+
+	return strings.TrimSpace(fallback)
 }
 
-func toolPath(tools ToolsConfig, category, name string) string {
+func toolPath(
+	tools ToolsConfig,
+	category string,
+	name string,
+) string {
+	category = normalizeToken(category)
+	name = normalizeToken(name)
+
 	switch category {
-	case "postgres":
+	case TypePostgres:
 		switch name {
 		case "psql":
-			return tools.Postgres.PSQL
+			return strings.TrimSpace(tools.Postgres.PSQL)
+
 		case "pg_restore":
-			return tools.Postgres.PGRestore
+			return strings.TrimSpace(tools.Postgres.PGRestore)
+
 		case "dropdb":
-			return tools.Postgres.DropDB
+			return strings.TrimSpace(tools.Postgres.DropDB)
+
 		case "createdb":
-			return tools.Postgres.CreateDB
+			return strings.TrimSpace(tools.Postgres.CreateDB)
 		}
-	case "mysql":
+
+	case TypeMySQL:
 		if name == "mysql" {
-			return tools.MySQL.MySQL
+			return strings.TrimSpace(tools.MySQL.MySQL)
 		}
-	case "oracle":
+
+	case TypeOracle:
 		if name == "impdp" {
-			return tools.Oracle.ImpDP
+			return strings.TrimSpace(tools.Oracle.ImpDP)
 		}
-	case "oracle_rman":
+
+	case TypeOracleRMAN:
 		if name == "rman" {
-			return tools.OracleRMAN.RMAN
+			return strings.TrimSpace(tools.OracleRMAN.RMAN)
 		}
-	case "mssql_powerprotect":
+
+	case TypeMSSQLPowerProtect:
 		if name == "ddbmsqlrc" {
-			return tools.MSSQLPowerProtect.DDBMSSQLRC
+			return strings.TrimSpace(
+				tools.MSSQLPowerProtect.DDBMSSQLRC,
+			)
 		}
 	}
+
 	return ""
 }
 
-func defaultString(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
+func defaultString(value string, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value
 	}
-	return value
+
+	return strings.TrimSpace(fallback)
 }
+
+func normalizeToken(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func normalizeTokenWithDefault(
+	value string,
+	fallback string,
+) string {
+	value = normalizeToken(value)
+	if value != "" {
+		return value
+	}
+
+	return normalizeToken(fallback)
+}
+
+func joinNonEmpty(values ...string) string {
+	parts := make([]string, 0, len(values))
+
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			parts = append(parts, value)
+		}
+	}
+
+	return strings.Join(parts, " ")
+}
+
