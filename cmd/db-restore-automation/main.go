@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"db-restore-automation/internal/app"
+	"db-restore-automation/internal/inspect"
 )
 
 const (
@@ -48,6 +49,7 @@ func runWithContext(
 			"operation cancelled before command execution: %v\n",
 			err,
 		)
+
 		return exitFailure
 	}
 
@@ -73,6 +75,12 @@ func runWithContext(
 
 	case "restore":
 		return runRestoreCommand(
+			ctx,
+			args[1:],
+		)
+
+	case "inspect":
+		return runInspectCommand(
 			ctx,
 			args[1:],
 		)
@@ -227,6 +235,41 @@ func runRestoreCommand(
 			JobName:    normalizedJobName,
 			DryRun:     *dryRun,
 		},
+	)
+}
+
+func runInspectCommand(
+	ctx context.Context,
+	args []string,
+) int {
+	if len(args) > 0 {
+		argument := strings.ToLower(
+			strings.TrimSpace(args[0]),
+		)
+
+		switch argument {
+		case "help", "-h", "--help":
+			fmt.Fprint(
+				os.Stderr,
+				inspect.Usage,
+			)
+
+			return exitOK
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		return cancelledExitCode(
+			"inspect",
+			err,
+		)
+	}
+
+	return inspect.RunCLI(
+		ctx,
+		args,
+		os.Stdout,
+		os.Stderr,
 	)
 }
 
@@ -476,6 +519,16 @@ func usage() {
 
 	fmt.Fprintln(
 		os.Stderr,
+		"  db-restore-automation inspect --config <config-file> [--job <job-name>] [--type <provider>] [--test-connection]",
+	)
+
+	fmt.Fprintln(
+		os.Stderr,
+		"  db-restore-automation inspect --discover [--type <provider>] [--format <text|json>]",
+	)
+
+	fmt.Fprintln(
+		os.Stderr,
 		"  db-restore-automation schedule windows --config <config-file> --root-dir <root-directory>",
 	)
 
@@ -501,6 +554,11 @@ func usage() {
 	fmt.Fprintln(
 		os.Stderr,
 		"  restore    Run one enabled restore job or all enabled restore jobs.",
+	)
+
+	fmt.Fprintln(
+		os.Stderr,
+		"  inspect    Inspect database restore tools, files, credentials, and connectivity.",
 	)
 
 	fmt.Fprintln(

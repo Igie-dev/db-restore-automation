@@ -21,6 +21,7 @@ Only the tools and files required by **enabled jobs** must be installed on a mac
 ```text
 cmd/db-restore-automation/   Go CLI entrypoint
 internal/                    Go implementation packages
+internal/inspect/            Read-only restore-environment inspection
 config/                      Environment-specific restore job YAML files
 examples/                    Sample restore job YAML files
 rman/                        RMAN command files, when RMAN is used
@@ -32,6 +33,7 @@ The legacy Bash and PowerShell restore runners have been removed.
 
 The Go CLI is used for:
 
+- Restore-environment inspection and tool discovery
 - Configuration validation
 - Dry-run validation
 - Manual restore execution
@@ -129,6 +131,22 @@ db-restore-automation restore \
   [--job <job-name>] \
   [--dry-run]
 
+db-restore-automation inspect \
+  --config <config-file> \
+  [--job <job-name>] \
+  [--type <provider>] \
+  [--format <text|json>] \
+  [--test-connection] \
+  [--include-disabled] \
+  [--timeout <duration>] \
+  [--max-scan-file-size <bytes>] \
+  [--max-scan-matches <count>]
+
+db-restore-automation inspect \
+  --discover \
+  [--type <provider>] \
+  [--format <text|json>]
+
 db-restore-automation schedule linux \
   --config <config-file> \
   --root-dir <root-directory>
@@ -141,12 +159,260 @@ db-restore-automation schedule windows \
 Display command help:
 
 ```powershell
+.\db-restore-automation.exe inspect --help
+```
+
+```powershell
 .\db-restore-automation.exe restore --help
 ```
 
 ```powershell
 .\db-restore-automation.exe schedule windows --help
 ```
+
+## Inspect Restore Environment
+
+The `inspect` command performs read-only checks for the database tools, backup files, credential-store locations, configured values, and optional connectivity required by restore jobs.
+
+It does not:
+
+- Restore, create, drop, or overwrite a database
+- Modify YAML configuration
+- Modify backup files
+- Read or print stored passwords
+- Modify PostgreSQL password files, MySQL login paths, Oracle Wallets, or PowerProtect lockboxes
+
+By default, only enabled jobs are inspected and network/database connection tests are not run.
+
+### Inspect all enabled jobs
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml
+```
+
+### Inspect one job
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --job AdventureWorksRestore
+```
+
+Job matching is case-insensitive.
+
+### Inspect one provider type
+
+Supported provider values are:
+
+```text
+postgres
+mysql
+oracle
+oracle_rman
+mssql_powerprotect
+```
+
+Example:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --type mssql_powerprotect
+```
+
+Common aliases such as `postgresql`, `mariadb`, `rman`, and `powerprotect` are normalized by the inspect command.
+
+### Discover installed tools without YAML
+
+Use discovery mode to run provider inspection without loading a restore configuration:
+
+```powershell
+.\db-restore-automation.exe inspect --discover
+```
+
+Limit discovery to one provider:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --discover `
+  --type postgres
+```
+
+Discovery mode does not accept `--job`. Because no YAML job is loaded, provider-specific values that cannot be discovered from the current machine may still be reported as unavailable.
+
+### Include disabled jobs
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --include-disabled
+```
+
+Disabled jobs are skipped unless this flag is present.
+
+### Run explicit read-only connectivity tests
+
+Connectivity tests must be requested explicitly:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --job WideWorldImportersRestore `
+  --test-connection
+```
+
+Depending on the provider and available tools, this can perform checks such as:
+
+- TCP connectivity to the configured PostgreSQL or MySQL/MariaDB host and port
+- PostgreSQL `SELECT 1`
+- MySQL/MariaDB `SELECT 1`
+- Oracle `SELECT 1 FROM DUAL`
+
+Oracle RMAN inspection remains intentionally offline because target behavior depends on the DBA-approved environment and command file. PowerProtect inspection also does not invoke a provider-native catalog or restore command; it inspects the configured Data Domain host and local Dell files only.
+
+The command does not perform destructive database statements.
+
+### JSON output
+
+Use JSON for automation, CI checks, or structured reporting:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --format json
+```
+
+Save the report:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --format json |
+  Set-Content .\logs\inspect-report.json -Encoding UTF8
+```
+
+### Inspection timeouts and PowerProtect scanning limits
+
+The default per-job timeout is `30s`.
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --timeout 60s
+```
+
+PowerProtect discovery scans only likely text-based configuration and log files. The defaults are:
+
+```text
+Maximum scanned file size : 20 MiB
+Maximum candidate matches : 500
+```
+
+Override them only when necessary:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --type mssql_powerprotect `
+  --max-scan-file-size 41943040 `
+  --max-scan-matches 1000
+```
+
+### Provider-specific inspection
+
+#### PostgreSQL
+
+Checks can include:
+
+- `psql`, `pg_restore`, `dropdb`, and `createdb`
+- Configured tool paths and executable versions
+- Backup directory and newest matching backup file
+- Supported extensions: `.sql`, `.sql.gz`, `.dump`, and `.backup`
+- Target database-name safety
+- PostgreSQL password-file presence without exposing its contents
+- Optional TCP and `SELECT 1` checks
+
+#### MySQL and MariaDB
+
+Checks can include:
+
+- `mysql` and optional `mysql_config_editor`
+- Configured tool paths and executable versions
+- Backup directory and newest matching `.sql` or `.sql.gz` file
+- Target database-name safety
+- Configured `login_path` or `defaults_file`
+- Login-path presence without exposing credentials
+- Optional TCP and `SELECT 1` checks
+
+#### Oracle Data Pump
+
+Checks can include:
+
+- `impdp`
+- `ORACLE_HOME` and `TNS_ADMIN`
+- `tnsnames.ora` and `sqlnet.ora`
+- Oracle Wallet location
+- Dump filename and `.dmp` extension
+- Schema-name safety
+- Configured Oracle DIRECTORY object name
+- Optional Oracle connectivity checks
+
+A database DIRECTORY object is not the same as a local filesystem directory. Offline inspection cannot always confirm that the Oracle DIRECTORY object exists or points to the expected server-side path.
+
+#### Oracle RMAN
+
+Checks can include:
+
+- `rman`
+- `ORACLE_HOME`, `ORACLE_SID`, and `TNS_ADMIN`
+- Supported credential method
+- Oracle Wallet or operating-system authentication prerequisites
+- RMAN target
+- DBA-approved command file
+- Log and working directories
+- Restore scope
+
+RMAN inspection remains offline even when `--test-connection` is supplied. The command reports that target validation must use the existing DBA-approved validation and dry-run flow.
+
+#### Dell PowerProtect MSSQL
+
+Checks can include:
+
+- `ddbmsqlrc.exe`
+- Optional Dell administration utilities
+- PowerProtect installation directories
+- Lockbox directory
+- Current Windows hostname and FQDN
+- Installed SQL Server instances
+- Configured source and target database values
+- Relocation destination directories
+- Candidate `dd_host`, `dd_user`, `device_path`, and backup `client` values found in readable Dell configuration and log files
+
+Candidate values include their source file where available. Treat them as evidence to review, not as an automatic replacement for the YAML configuration. In particular, the current server FQDN may differ from the source client identity recorded in the PowerProtect backup catalog.
+
+PowerProtect inspection does not automatically run a catalog-listing command, even when `--test-connection` is supplied.
+
+Example:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --job AdventureWorksRestore
+```
+
+### Inspect command statuses
+
+Text and JSON reports use these check statuses:
+
+| Status | Meaning |
+|---|---|
+| `pass` | The check completed successfully |
+| `warn` | The check found a nonfatal concern or could not fully verify something |
+| `fail` | A required check failed |
+| `info` | Informational result that does not affect success by itself |
+
+A warning exit code is intentional. It allows scripts to distinguish a clean inspection from one that completed but needs operator review.
 
 ## Recommended Windows Workflow
 
@@ -156,7 +422,27 @@ Run the following commands from the deployed application directory:
 cd C:\db-restore
 ```
 
-### 1. Validate the configuration
+### 1. Inspect the restore environment
+
+Start with the default read-only inspection:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml
+```
+
+Review every `warn` and `fail` result before proceeding.
+
+When the offline inspection is acceptable, run explicit read-only connectivity checks for the job being tested:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --job AdventureWorksRestore `
+  --test-connection
+```
+
+### 2. Validate the configuration
 
 ```powershell
 .\db-restore-automation.exe validate `
@@ -165,7 +451,7 @@ cd C:\db-restore
 
 Do not continue until validation succeeds.
 
-### 2. Dry-run one job
+### 3. Dry-run one job
 
 ```powershell
 .\db-restore-automation.exe restore `
@@ -407,6 +693,11 @@ The executable reads the YAML every time it starts.
 After a YAML-only change:
 
 ```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml
+```
+
+```powershell
 .\db-restore-automation.exe validate `
   --config .\config\restore-jobs.windows.yml
 ```
@@ -461,11 +752,36 @@ Disabled jobs may remain incomplete templates. Their name, type, enabled flag, a
 
 ## Exit Codes
 
+The existing restore, validation, and scheduling commands use:
+
 | Exit code | Meaning |
 |---|---|
 | `0` | Command completed successfully |
 | `1` | Restore failure, safety failure, validation failure, or cancellation |
 | `2` | CLI usage, configuration loading, job-selection, or schedule-generation error |
+
+The `inspect` command uses more detailed result codes:
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Inspection completed and no warnings or failures were reported |
+| `1` | Inspection completed with one or more warnings and no failed checks |
+| `2` | One or more required inspection checks failed, or inspection could not complete |
+| `3` | Invalid inspect arguments or unsupported inspect options |
+
+PowerShell example:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml
+
+switch ($LASTEXITCODE) {
+  0 { Write-Host "Inspection passed." }
+  1 { Write-Warning "Inspection completed with warnings." }
+  2 { throw "Inspection failed." }
+  3 { throw "Inspect command usage error." }
+}
+```
 
 ## Safety
 
@@ -668,6 +984,29 @@ relocate:
     physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_log.ldf"
 ```
 
+### Inspect PowerProtect values before restoring
+
+Run the job inspection before changing or testing PowerProtect restore values:
+
+```powershell
+.\db-restore-automation.exe inspect `
+  --config .\config\restore-jobs.windows.yml `
+  --job AdventureWorksRestore
+```
+
+The report can compare configured values with candidates discovered from readable Dell logs and configuration files:
+
+```text
+dd_host
+dd_user
+device_path
+client
+lockbox_path
+instance_name
+```
+
+Do not copy a candidate blindly. Confirm it belongs to the backup set and source SQL Server being restored. A cluster name, Availability Group listener, virtual SQL hostname, or previous server name may be the correct backup `client` instead of the current machine FQDN.
+
 ### `No full backup was found`
 
 When the provider connects successfully but reports:
@@ -754,18 +1093,22 @@ crontab generated-restore.cron
 
 Before enabling an unattended restore:
 
-1. Validate the configuration.
-2. Run a dry run.
-3. Verify the selected backup or PowerProtect source.
-4. Verify the destination database and relocation paths.
-5. Verify credentials using the scheduled-task account.
-6. Disable the scheduled task temporarily.
-7. Run one supervised manual restore.
-8. Review the main and provider logs.
-9. Verify the restored database.
-10. Generate or update the schedule.
-11. Enable the scheduled task.
-12. Test alert delivery.
-13. Periodically test the restore process.
+1. Run `inspect` for the selected job.
+2. Review and resolve failed inspection checks.
+3. Review all inspection warnings.
+4. Validate the configuration.
+5. Run `inspect --test-connection` using the intended execution account.
+6. Run a dry run.
+7. Verify the selected backup or PowerProtect source.
+8. Verify the destination database and relocation paths.
+9. Verify credentials using the scheduled-task account.
+10. Disable the scheduled task temporarily.
+11. Run one supervised manual restore.
+12. Review the main and provider logs.
+13. Verify the restored database.
+14. Generate or update the schedule.
+15. Enable the scheduled task.
+16. Test alert delivery.
+17. Periodically inspect and test the restore process.
 
 Never enable unattended restores until the target, credentials, backup selection, relocation paths, safety rules, and restore behavior have been manually verified.
