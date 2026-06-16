@@ -56,3 +56,6 @@ Thumbs.db
 
 .codex
 ./graphify-out
+
+db-restore-automation
+db-restore-automation.exe
