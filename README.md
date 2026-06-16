@@ -6,13 +6,15 @@ This project is strictly **restore-only**. It never creates database backups.
 
 ## Supported Restore Providers
 
-| Type                 | Provider                          | Supported input                       |
-| -------------------- | --------------------------------- | ------------------------------------- |
-| `postgres`           | PostgreSQL `psql` / `pg_restore`  | `.sql`, `.sql.gz`, `.dump`, `.backup` |
-| `mysql`              | MySQL or MariaDB `mysql`          | `.sql`, `.sql.gz`                     |
-| `oracle`             | Oracle Data Pump `impdp`          | `.dmp`                                |
-| `oracle_rman`        | Oracle RMAN                       | DBA-approved RMAN command file        |
-| `mssql_powerprotect` | Dell PowerProtect `ddbmsqlrc.exe` | PowerProtect-managed backup           |
+| Type | Provider | Supported input |
+|---|---|---|
+| `postgres` | PostgreSQL `psql` / `pg_restore` | `.sql`, `.sql.gz`, `.dump`, `.backup` |
+| `mysql` | MySQL or MariaDB `mysql` | `.sql`, `.sql.gz` |
+| `oracle` | Oracle Data Pump `impdp` | `.dmp` |
+| `oracle_rman` | Oracle RMAN | DBA-approved RMAN command file |
+| `mssql_powerprotect` | Dell PowerProtect `ddbmsqlrc.exe` | PowerProtect-managed backup |
+
+Only the tools and files required by **enabled jobs** must be installed on a machine.
 
 ## Repository Layout
 
@@ -21,47 +23,49 @@ cmd/db-restore-automation/   Go CLI entrypoint
 internal/                    Go implementation packages
 config/                      Environment-specific restore job YAML files
 examples/                    Sample restore job YAML files
-rman/                        RMAN sample command files
+rman/                        RMAN command files, when RMAN is used
 logs/                        Main runtime logs
 docs/                        Operator documentation
 ```
 
 The legacy Bash and PowerShell restore runners have been removed.
 
-Use the Go CLI for:
+The Go CLI is used for:
 
-* Configuration validation
-* Restore execution
-* Dry-run validation
-* Linux cron generation
-* Windows Task Scheduler script generation
-* Slack and email notifications
+- Configuration validation
+- Dry-run validation
+- Manual restore execution
+- Linux cron generation
+- Windows Task Scheduler script generation
+- Slack and email notifications
 
-## Requirements
+## Build Requirements
 
-Install the Go version declared in `go.mod`, or a newer compatible release.
+Install the Go version declared in `go.mod`, or a newer compatible version.
 
-Restore tools must also be installed for the providers used on the machine:
+The target machine does **not** need Go after the executable has been built.
 
-* PostgreSQL: `psql`, `pg_restore`, `dropdb`, and `createdb`
-* MySQL/MariaDB: `mysql`
-* Oracle Data Pump: `impdp`
-* Oracle RMAN: `rman`
-* Dell PowerProtect MSSQL: `ddbmsqlrc.exe`
+Restore tools must still be installed for enabled providers:
 
-The operating-system account running the CLI or scheduled task must have access to:
+- PostgreSQL: `psql`, `pg_restore`, `dropdb`, and `createdb`
+- MySQL/MariaDB: `mysql`
+- Oracle Data Pump: `impdp`
+- Oracle RMAN: `rman`
+- Dell PowerProtect MSSQL: `ddbmsqlrc.exe`
 
-* The configured backup files
-* Database credential stores
-* Oracle Wallets
-* Dell PowerProtect lockboxes
-* Restore tool executables
-* Target database servers
-* Log directories
+The Windows or Linux account running the CLI or scheduled task must have access to:
 
-## Build
+- Restore tool executables
+- Backup files and backup directories
+- Target database servers
+- Credential stores
+- Oracle Wallets, when used
+- Dell PowerProtect lockboxes, when used
+- Application and provider log directories
 
-Run commands from the repository root.
+## Build the CLI
+
+Run the build command from the repository root, where `go.mod` exists.
 
 ### Linux
 
@@ -72,10 +76,48 @@ go build -o db-restore-automation ./cmd/db-restore-automation
 
 ### Windows PowerShell
 
+Use forward slashes in the Go package path:
+
 ```powershell
 go mod tidy
-go build -o db-restore-automation.exe .\cmd\db-restore-automation
+go build -o db-restore-automation.exe ./cmd/db-restore-automation
 ```
+
+Verify the executable:
+
+```powershell
+.\db-restore-automation.exe --help
+```
+
+## Windows Deployment
+
+For a Windows installation without RMAN jobs, the minimum application files are:
+
+```text
+C:\db-restore\
+├── db-restore-automation.exe
+├── config\
+│   └── restore-jobs.windows.yml
+├── logs\
+└── install-db-restore-tasks.ps1
+```
+
+The generated task-installation script is required only when installing or updating scheduled tasks.
+
+You do not need to deploy:
+
+```text
+cmd\
+internal\
+*.go
+go.mod
+go.sum
+docs\
+examples\
+rman\
+```
+
+The external tools, lockbox, credential files, and database connectivity are separate machine dependencies and must match the paths in the YAML configuration.
 
 ## CLI Commands
 
@@ -96,82 +138,43 @@ db-restore-automation schedule windows \
   --root-dir <root-directory>
 ```
 
-Use `--help` to display command-specific options:
+Display command help:
 
-```bash
-./db-restore-automation restore --help
+```powershell
+.\db-restore-automation.exe restore --help
 ```
 
 ```powershell
 .\db-restore-automation.exe schedule windows --help
 ```
 
-## Step-by-Step Run Guide
+## Recommended Windows Workflow
 
-### 1. Build the CLI
-
-Linux:
-
-```bash
-go build -o db-restore-automation ./cmd/db-restore-automation
-```
-
-Windows:
+Run the following commands from the deployed application directory:
 
 ```powershell
-go build -o db-restore-automation.exe .\cmd\db-restore-automation
+cd C:\db-restore
 ```
 
-### 2. Select the machine configuration
-
-Use the appropriate configuration file:
-
-* Linux: `config/restore-jobs.linux.yml`
-* Windows: `config/restore-jobs.windows.yml`
-
-### 3. Configure restore jobs
-
-Update:
-
-* Tool executable paths
-* Backup directories
-* Backup filename patterns
-* Target databases
-* Credential methods
-* Restore schedules
-* Safety rules
-* Optional alerts
-
-Do not put database, SMTP, Slack, wallet, or lockbox secrets directly in YAML.
-
-### 4. Validate the configuration
-
-Linux:
-
-```bash
-./db-restore-automation validate \
-  --config ./config/restore-jobs.linux.yml
-```
-
-Windows:
+### 1. Validate the configuration
 
 ```powershell
 .\db-restore-automation.exe validate `
   --config .\config\restore-jobs.windows.yml
 ```
 
-### 5. Run a dry run
+Do not continue until validation succeeds.
 
-Linux:
+### 2. Dry-run one job
 
-```bash
-./db-restore-automation restore \
-  --config ./config/restore-jobs.linux.yml \
-  --job hris_postgres_restore \
+```powershell
+.\db-restore-automation.exe restore `
+  --config .\config\restore-jobs.windows.yml `
+  --job AdventureWorksRestore `
   --dry-run
 ```
 
-Windows:
+Another example:
 
 ```powershell
 .\db-restore-automation.exe restore `
@@ -180,59 +183,45 @@ Windows:
   --dry-run
 ```
 
-A dry run does not execute destructive provider commands.
+A dry run does not execute destructive provider commands, but it can still validate:
 
-However, it still performs applicable validation, including:
+- Configuration values
+- Safety rules
+- Backup-file selection
+- Backup-file readability
+- Backup extensions
+- Gzip contents
+- Credential configuration
+- Tool paths represented in configuration
+- Oracle command files and directories
+- Provider command arguments
 
-* Configuration validation
-* Safety-rule validation
-* Backup-file selection
-* Backup-file readability checks
-* Backup extension validation
-* Gzip validation and temporary decompression when applicable
-* Credential configuration validation
-* Oracle command-file and directory validation
-* Restore argument generation
+A dry run can therefore fail when configuration, backup, or credential-related requirements are missing.
 
-A dry run may therefore fail when a required file, directory, or configuration value is missing.
+## Manual Restore
 
-### 6. Review logs
+A manual restore runs immediately from PowerShell and does not wait for Task Scheduler.
 
-The default main log file is:
+### Important before a manual restore
 
-```text
-logs/restore.log
-```
-
-The path is resolved relative to the application root used by the logger.
-
-Override it with the `LOG_FILE` environment variable:
-
-Linux:
-
-```bash
-export LOG_FILE=/var/log/db-restore-automation/restore.log
-```
-
-Windows PowerShell:
+If the same job already has a scheduled task, disable that task temporarily. This prevents a scheduled run from starting while the manual restore is still running.
 
 ```powershell
-$env:LOG_FILE = "C:\db-restore-automation\logs\restore.log"
+Disable-ScheduledTask `
+  -TaskName "DB Restore - AdventureWorksRestore"
 ```
 
-Each provider command also writes stdout and stderr to temporary files. Their paths are recorded in the main log.
+### Run one job manually
 
-### 7. Run the restore
+```powershell
+cd C:\db-restore
 
-Linux:
-
-```bash
-./db-restore-automation restore \
-  --config ./config/restore-jobs.linux.yml \
-  --job hris_postgres_restore
+.\db-restore-automation.exe restore `
+  --config .\config\restore-jobs.windows.yml `
+  --job AdventureWorksRestore
 ```
 
-Windows:
+Run the other job manually:
 
 ```powershell
 .\db-restore-automation.exe restore `
@@ -240,319 +229,137 @@ Windows:
   --job WideWorldImportersRestore
 ```
 
-### 8. Generate schedules
+When `safety.require_confirmation` is `true`, type the exact job name when prompted.
 
-Generate schedules only after configuration validation and manual dry-run checks pass.
-
-The schedule commands print generated scheduler content to stdout. They do not directly install the schedule.
-
-## Configuration Validation
-
-The YAML loader enforces:
-
-* Exactly one YAML document
-* A mapping/object at the root
-* Known configuration fields only
-* A configured maximum file size
-* No direct password fields
-* No empty top-level `jobs` array
-* Unique job names, case-insensitively
-* Supported restore provider types
-* Required provider-specific values for enabled jobs
-* Valid ports, schedules, credential methods, and alert settings
-
-Disabled jobs may remain incomplete templates. Their name, type, enabled flag, and safety configuration must still be valid.
-
-## Running Restores
-
-### Restore one job
-
-```bash
-./db-restore-automation restore \
-  --config ./config/restore-jobs.linux.yml \
-  --job hris_postgres_restore
-```
-
-Job names are matched case-insensitively.
-
-When a selected job is disabled, it is logged as skipped and no restore is performed.
-
-### Restore all enabled jobs
-
-```bash
-./db-restore-automation restore \
-  --config ./config/restore-jobs.linux.yml
-```
-
-The runner continues processing later selected jobs after an individual job failure.
-
-Remaining jobs are not started after the operation context is cancelled, such as by Ctrl+C or `SIGTERM`.
-
-## Exit Codes
-
-| Exit code | Meaning                                                                                                                   |
-| --------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `0`       | Command completed successfully                                                                                            |
-| `1`       | Restore failure, safety failure, cancellation, or failed `validate` result                                                |
-| `2`       | CLI usage error, unreadable or malformed configuration, invalid job selection, or schedule-generation configuration error |
-
-For the `restore` and `schedule` commands, configuration rejection returns exit code `2`.
-
-For the `validate` command, a successfully loaded configuration that fails semantic or safety validation returns exit code `1`.
-
-## PostgreSQL Restores
-
-Supported backup formats:
-
-* `.sql`
-* `.sql.gz`
-* `.dump`
-* `.backup`
-
-Plain SQL and compressed SQL files are restored using `psql`.
-
-Custom-format backups are restored using `pg_restore`.
-
-Before destructive actions, the provider:
-
-* Validates the backup file
-* Decompresses `.sql.gz` files to a temporary SQL file
-* Validates configured executable paths
-* Runs a `pg_restore --list` preflight for custom-format archives
-* Confirms that the target and maintenance databases are different
-
-The restore sequence is:
-
-1. Terminate active target-database sessions
-2. Drop the target database
-3. Recreate the target database
-4. Restore the selected backup
-
-PostgreSQL credentials must be supplied using `pgpass` or `pgpass.conf`.
-
-## MySQL and MariaDB Restores
-
-Supported backup formats:
-
-* `.sql`
-* `.sql.gz`
-
-The provider validates and opens the backup before dropping the target database.
-
-The restore sequence is:
-
-1. Validate the backup stream
-2. Drop the target database if it exists
-3. Recreate the target database
-4. Stream the SQL into the target database
-
-Supported credential methods:
-
-* `login_path`
-* `defaults_file`
-
-Example login-path creation:
-
-```bash
-mysql_config_editor set \
-  --login-path=inventory_test \
-  --host=localhost \
-  --user=inventory_restore \
-  --password
-```
-
-Do not put the MySQL password in YAML.
-
-## Oracle Data Pump Restores
-
-Oracle Data Pump uses `impdp` and accepts `.dmp` files.
-
-The selected local backup file is validated before execution. Only its filename is passed to `impdp`.
-
-The same dump filename must already be available in the filesystem path represented by the configured Oracle DIRECTORY object on the Oracle database server.
-
-For example:
+For unattended scheduled jobs, the YAML must explicitly contain:
 
 ```yaml
-target:
-  connect_string: "/@ACCOUNTING_TEST"
-  schema: "ACCOUNTING_TEST"
-  oracle_directory: "ORCH_DUMP_DIR"
-  credential_method: "oracle_wallet"
+safety:
+  require_confirmation: false
 ```
 
-The Oracle DIRECTORY object `ORCH_DUMP_DIR` must point to the server-side directory containing the selected dump filename.
+### Run all enabled jobs manually
 
-Oracle Data Pump credentials must use Oracle Wallet authentication.
-
-## Oracle RMAN Restores
-
-Oracle RMAN executes a DBA-approved command file.
-
-Required configuration includes:
-
-* RMAN executable
-* Target connection
-* Command file
-* Log file
-* `ORACLE_HOME`
-* `ORACLE_SID`
-* Credential method
-* Restore scope
-
-Supported credential methods:
-
-* `os_auth`
-* `oracle_wallet`
-
-The currently supported restore scope is:
-
-```yaml
-restore_scope: "full_database"
-```
-
-RMAN command files must not contain credentials.
-
-Example:
-
-```yaml
-rman:
-  target: "/"
-  catalog: ""
-  command_file: "/opt/db-restore-automation/rman/restore-full-database.sample.rman"
-  log_file: "/opt/db-restore-automation/logs/oracle-rman-restore.log"
-  credential_method: "os_auth"
-  oracle_home: "/u01/app/oracle/product/19c/dbhome_1"
-  oracle_sid: "ORCLTEST"
-  restore_scope: "full_database"
-```
-
-The RMAN provider captures and logs the tail of the current RMAN log after execution.
-
-## Dell PowerProtect MSSQL Restores
-
-Dell PowerProtect restores use `ddbmsqlrc.exe`.
-
-Required configuration includes:
-
-* Data Domain host
-* Data Domain user
-* Device path
-* Lockbox path
-* Source client
-* Source database
-* Target database
-* Relocation mappings
-* Lockbox credential method
-
-The currently supported restore type is:
-
-```yaml
-restore_type: "normal"
-```
-
-Example:
-
-```yaml
-powerprotect:
-  dd_host: "192.168.20.251"
-  dd_user: "sql-ppdm-user"
-  device_path: "/sql-ppdm-user/sample-device-path"
-  lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
-  client: "source-sql-server.domain.local"
-  skip_client_resolution: true
-  restore_type: "normal"
-  credential_method: "lockbox"
-```
-
-Each SQL Server logical file must have a unique destination:
-
-```yaml
-relocate:
-  - logical_name: "AdventureWorks"
-    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test.mdf"
-
-  - logical_name: "AdventureWorks_log"
-    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test_log.ldf"
-```
-
-The PowerProtect lockbox directory must be available to the account running the restore.
-
-## Scheduling
-
-### Linux cron generation
-
-Generate cron entries:
-
-```bash
-./db-restore-automation schedule linux \
-  --config ./config/restore-jobs.linux.yml \
-  --root-dir /opt/db-restore-automation
-```
-
-Save the generated output for review:
-
-```bash
-./db-restore-automation schedule linux \
-  --config ./config/restore-jobs.linux.yml \
-  --root-dir /opt/db-restore-automation \
-  > generated-restore.cron
-```
-
-Review the file:
-
-```bash
-cat generated-restore.cron
-```
-
-Install it for the current operating-system account:
-
-```bash
-crontab generated-restore.cron
-```
-
-Linux schedules use standard five-field cron expressions:
-
-```yaml
-schedule:
-  enabled: true
-  linux_cron: "0 3 * * *"
-  windows_time: ""
-  windows_frequency: ""
-```
-
-The generated cron command:
-
-* Uses absolute application and configuration paths
-* Creates the configured log directory
-* Writes job output to a per-job cron log
-* Escapes percent signs used by cron
-* Skips enabled jobs with an empty `linux_cron`
-
-### Windows Task Scheduler generation
-
-Generate the PowerShell registration script:
+Omit `--job`:
 
 ```powershell
+.\db-restore-automation.exe restore `
+  --config .\config\restore-jobs.windows.yml
+```
+
+The CLI continues with later selected jobs after an individual job failure. It stops starting new jobs when the process is cancelled.
+
+Running all jobs can be dangerous when jobs target the same database server or share restore resources. Prefer running and verifying one job at a time.
+
+### Monitor the application log
+
+Open another PowerShell window:
+
+```powershell
+Get-Content C:\db-restore\logs\restore.log -Wait
+```
+
+Show the latest 150 lines:
+
+```powershell
+Get-Content C:\db-restore\logs\restore.log -Tail 150
+```
+
+Command stdout and stderr are written to temporary files. Their paths are recorded in `restore.log`.
+
+### Re-enable the scheduled task
+
+After the manual test completes:
+
+```powershell
+Enable-ScheduledTask `
+  -TaskName "DB Restore - AdventureWorksRestore"
+```
+
+## Manually Trigger a Scheduled Task
+
+To test the exact Task Scheduler configuration instead of running the CLI directly:
+
+```powershell
+Start-ScheduledTask `
+  -TaskName "DB Restore - AdventureWorksRestore"
+```
+
+Check its result:
+
+```powershell
+Get-ScheduledTaskInfo `
+  -TaskName "DB Restore - AdventureWorksRestore" |
+  Select-Object LastRunTime, LastTaskResult, NextRunTime
+```
+
+A successful CLI execution normally produces:
+
+```text
+LastTaskResult : 0
+```
+
+A nonzero value means the executable returned an error. Review:
+
+```powershell
+Get-Content C:\db-restore\logs\restore.log -Tail 150
+```
+
+## Generate and Install Windows Scheduled Tasks
+
+Generate the script using the **actual deployed root directory**:
+
+```powershell
+cd C:\db-restore
+
 .\db-restore-automation.exe schedule windows `
   --config .\config\restore-jobs.windows.yml `
-  --root-dir C:\db-restore-automation |
-  Out-File .\install-db-restore-tasks.ps1 -Encoding utf8
+  --root-dir C:\db-restore |
+  Set-Content .\install-db-restore-tasks.ps1 -Encoding UTF8
 ```
 
-Review the generated script:
+Review the generated paths:
 
 ```powershell
-Get-Content .\install-db-restore-tasks.ps1
+Select-String `
+  -Path .\install-db-restore-tasks.ps1 `
+  -Pattern "exePath|configPath|workingDirectory|taskName|taskTrigger"
 ```
 
-Run it using the Windows account that owns the required credential stores:
+Expected application paths:
+
+```text
+C:\db-restore\db-restore-automation.exe
+C:\db-restore\config\restore-jobs.windows.yml
+C:\db-restore
+```
+
+Install or update the tasks:
 
 ```powershell
 .\install-db-restore-tasks.ps1
 ```
 
-Windows schedules currently support only:
+Verify them:
+
+```powershell
+Get-ScheduledTask -TaskName "DB Restore - *" |
+  Select-Object TaskName, State,
+    @{Name="User"; Expression={$_.Principal.UserId}},
+    @{Name="LogonType"; Expression={$_.Principal.LogonType}}
+```
+
+Check task run information:
+
+```powershell
+Get-ScheduledTaskInfo `
+  -TaskName "DB Restore - AdventureWorksRestore"
+
+Get-ScheduledTaskInfo `
+  -TaskName "DB Restore - WideWorldImportersRestore"
+```
+
+Windows schedules currently support:
 
 ```yaml
 windows_frequency: "DAILY"
@@ -564,33 +371,115 @@ Example:
 schedule:
   enabled: true
   linux_cron: ""
-  windows_time: "03:00"
+  windows_time: "15:00"
   windows_frequency: "DAILY"
 ```
 
-Generated Windows tasks:
+Generated tasks:
 
-* Use the configured application root as the working directory
-* Use absolute executable and configuration paths
-* Start missed tasks when the machine becomes available
-* Prevent overlapping instances of the same task
-* Replace an existing task with the same generated task name
+- Use the configured application root as the working directory
+- Use absolute executable and configuration paths
+- Start missed tasks when the computer becomes available
+- Prevent overlapping instances of the **same task**
+- Replace an existing task with the same generated name
+
+Two different scheduled tasks can still overlap. Do not schedule separate restore jobs only a few minutes apart unless concurrent execution has been tested and approved.
+
+## When to Rebuild or Regenerate
+
+### YAML-only changes
+
+You do **not** need to rebuild the executable when changing:
+
+- Source client
+- Source database
+- Target database
+- Data Domain values
+- Device path
+- Relocation paths
+- Backup directory or pattern
+- Safety rules
+- Alert settings
+- Credential-method configuration
+
+The executable reads the YAML every time it starts.
+
+After a YAML-only change:
+
+```powershell
+.\db-restore-automation.exe validate `
+  --config .\config\restore-jobs.windows.yml
+```
+
+Then run a dry run or supervised manual restore.
+
+### Go source-code changes
+
+Rebuild when any `.go` file changes:
+
+```powershell
+go build -o db-restore-automation.exe ./cmd/db-restore-automation
+```
+
+Stop or disable scheduled tasks before replacing an executable that might currently be running.
+
+Copy the newly built executable to:
+
+```text
+C:\db-restore\db-restore-automation.exe
+```
+
+### Schedule changes
+
+Regenerate and reinstall scheduled tasks when changing:
+
+- Job name
+- Schedule time
+- Schedule frequency
+- Whether scheduling is enabled
+- Application root directory
+- Config file path
+
+Changing provider values in YAML does not require task regeneration when the job name and paths remain unchanged.
+
+## Configuration Validation
+
+The YAML loader checks:
+
+- Exactly one YAML document
+- A mapping/object at the root
+- Known configuration fields only
+- Maximum configuration-file size
+- No direct password fields
+- A nonempty top-level `jobs` collection
+- Unique job names, case-insensitively
+- Supported provider types
+- Required provider-specific values for enabled jobs
+- Valid ports, schedules, credential methods, and alert settings
+
+Disabled jobs may remain incomplete templates. Their name, type, enabled flag, and safety configuration must still be valid.
+
+## Exit Codes
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Command completed successfully |
+| `1` | Restore failure, safety failure, validation failure, or cancellation |
+| `2` | CLI usage, configuration loading, job-selection, or schedule-generation error |
 
 ## Safety
 
-Every enabled job is checked before execution.
+Every enabled job is checked before provider execution.
 
 ### Blocked-name rules
 
-The `safety.block_if_name_contains` list is matched case-insensitively against:
+`safety.block_if_name_contains` is matched case-insensitively against target-oriented values, including:
 
-* The job name
-* Target-oriented database identifiers
-* Target host or connect string where applicable
-* RMAN target and Oracle SID
-* MSSQL target database
-
-PowerProtect source database, source client, Data Domain host, and backup device path are intentionally not treated as destructive targets. This permits production backups to be restored into approved non-production databases.
+- Job name
+- Target database identifiers
+- Target host or connect string where applicable
+- RMAN target and Oracle SID
+- MSSQL target database
 
 Example:
 
@@ -603,13 +492,13 @@ safety:
     - "live"
 ```
 
-A matching blocked token stops the job before provider execution.
+A matching token blocks the restore before the provider command runs.
 
 ### Interactive confirmation
 
 Destructive restores require confirmation by default.
 
-To disable confirmation for an approved unattended job, explicitly configure:
+For an approved unattended scheduled job:
 
 ```yaml
 safety:
@@ -618,31 +507,31 @@ safety:
 
 When confirmation is required:
 
-* `--dry-run` skips the prompt
-* Interactive execution requires typing the exact job name
-* Generic answers such as `yes` are not accepted
-* Non-interactive execution fails safely
+- Dry-run skips the prompt
+- Manual execution requires the exact job name
+- Generic values such as `yes` are not accepted
+- Non-interactive scheduled execution fails safely
 
-The environment variable below can force confirmation globally:
+This environment variable can force confirmation globally:
 
 ```text
 REQUIRE_CONFIRMATION=true
 ```
 
-Setting the environment variable to `false` does not override a job that requires confirmation.
+Setting it to `false` does not disable confirmation required by a job.
 
 ## Credentials
 
-Do not store passwords in YAML.
+Never store passwords directly in YAML.
 
 ### PostgreSQL
 
 Use:
 
-* `.pgpass` on Linux
-* `pgpass.conf` on Windows
+- `.pgpass` on Linux
+- `pgpass.conf` on Windows
 
-The Windows default location is commonly:
+The Windows credential file normally belongs to the account running the task:
 
 ```text
 %APPDATA%\postgresql\pgpass.conf
@@ -652,10 +541,8 @@ The Windows default location is commonly:
 
 Use:
 
-* MySQL login path
-* MySQL defaults file
-
-Ensure the credential file is accessible to the scheduled-task account.
+- MySQL login path
+- MySQL defaults file
 
 ### Oracle Data Pump
 
@@ -665,21 +552,146 @@ Use Oracle Wallet.
 
 Use:
 
-* Operating-system authentication
-* Oracle Wallet
+- Operating-system authentication
+- Oracle Wallet
 
 ### Dell PowerProtect MSSQL
 
-Use a Dell PowerProtect lockbox.
+Use the Dell PowerProtect lockbox.
 
-See:
+The scheduled task must run under an account permitted to access the lockbox and PowerProtect client installation.
 
-* [Credential configuration](docs/credentials.md)
-* [Restore configuration reference](docs/configuration.md)
+## PostgreSQL Restore Behavior
+
+Supported formats:
+
+- `.sql`
+- `.sql.gz`
+- `.dump`
+- `.backup`
+
+Before destructive execution, the provider validates and prepares the backup. For custom-format backups, it runs a `pg_restore --list` preflight.
+
+The restore sequence is:
+
+1. Terminate active target-database sessions
+2. Drop the target database
+3. Recreate the target database
+4. Restore the selected backup
+
+## MySQL and MariaDB Restore Behavior
+
+Supported formats:
+
+- `.sql`
+- `.sql.gz`
+
+The provider opens and validates the backup before dropping the target database.
+
+The restore sequence is:
+
+1. Validate the backup stream
+2. Drop the target database
+3. Recreate the target database
+4. Stream SQL into the target database
+
+Supported credential methods:
+
+- `login_path`
+- `defaults_file`
+
+## Oracle Data Pump Restore Behavior
+
+Oracle Data Pump uses `impdp` and accepts `.dmp` files.
+
+Only the dump filename is passed to `impdp`. The dump file must be available in the server-side filesystem location represented by the configured Oracle DIRECTORY object.
+
+## Oracle RMAN Restore Behavior
+
+RMAN executes a DBA-approved command file.
+
+Supported credential methods:
+
+- `os_auth`
+- `oracle_wallet`
+
+Currently supported scope:
+
+```yaml
+restore_scope: "full_database"
+```
+
+RMAN command files must not contain passwords.
+
+Machines with no enabled RMAN jobs do not need the repository `rman` folder.
+
+## Dell PowerProtect MSSQL Restore Behavior
+
+PowerProtect restores use `ddbmsqlrc.exe`.
+
+Required job information includes:
+
+- Data Domain host
+- Data Domain user
+- Device path
+- Lockbox path
+- Source client
+- Source database
+- Target database
+- Restore type
+- Relocation mappings
+
+Example:
+
+```yaml
+powerprotect:
+  dd_host: "192.168.20.251"
+  dd_user: "sql-ppdm-user"
+  device_path: "/sql-ppdm-user/device-path"
+  lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
+  client: "actual-source-sql-server.company.local"
+  skip_client_resolution: true
+  restore_type: "normal"
+  credential_method: "lockbox"
+```
+
+The `client` value must match the source client identity used when the backup was created, especially when `skip_client_resolution` is enabled.
+
+Each logical SQL Server file must have a unique destination:
+
+```yaml
+relocate:
+  - logical_name: "AdventureWorks"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks.mdf"
+
+  - logical_name: "AdventureWorks_log"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_log.ldf"
+```
+
+### `No full backup was found`
+
+When the provider connects successfully but reports:
+
+```text
+No full backup was found!
+XBSA object not found.
+```
+
+the CLI and scheduler have already started correctly. Recheck the PowerProtect backup-selection values:
+
+- Source client
+- Source database
+- SQL instance identity
+- Data Domain host
+- Data Domain user
+- Device path
+- Backup workflow and restore arguments
+
+After correcting YAML values, validate and run the job manually. A YAML-only correction does not require rebuilding the executable.
 
 ## Alerts
 
-Alert configuration is defined at the top level of the YAML file beside `tools:` and `jobs:`.
+Alert configuration is defined beside `tools:` and `jobs:`.
 
 ```yaml
 alerts:
@@ -705,91 +717,55 @@ alerts:
       - "it-team@company.com"
 ```
 
-To enable alerts:
+Dry-run alerts are controlled independently by `notify_on.dry_run`.
 
-1. Set `alerts.enabled: true`.
-2. Enable Slack, email, or both.
-3. Configure at least one `notify_on` event.
-4. Define the referenced environment variables for the execution account.
+Slack webhook URLs and SMTP passwords must be stored in environment variables, not YAML.
 
-### Alert routing
+Email delivery requires STARTTLS and SMTP authentication.
 
-Normal restore results use:
+## Linux Scheduling
 
-* `notify_on.success`
-* `notify_on.failure`
-
-Dry-run alerts are controlled independently by:
-
-```yaml
-notify_on:
-  dry_run: true
-```
-
-A dry-run alert does not also require `success: true` or `failure: true`.
-
-### Slack
-
-Slack notifications require an HTTPS webhook URL stored in the configured environment variable.
-
-Linux:
+Generate cron output:
 
 ```bash
-export DB_RESTORE_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+./db-restore-automation schedule linux \
+  --config ./config/restore-jobs.linux.yml \
+  --root-dir /opt/db-restore-automation
 ```
 
-Windows PowerShell:
-
-```powershell
-$env:DB_RESTORE_SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/..."
-```
-
-Slack webhook redirects are not followed.
-
-### Email
-
-Email alerts require:
-
-* SMTP server with STARTTLS
-* SMTP authentication
-* Username environment variable
-* Password environment variable
-* Sender environment variable
-* At least one valid recipient
-
-Linux:
+Save and review it:
 
 ```bash
-export DB_RESTORE_SMTP_USERNAME="restore-alerts@company.com"
-export DB_RESTORE_SMTP_PASSWORD="..."
-export DB_RESTORE_EMAIL_FROM="restore-alerts@company.com"
+./db-restore-automation schedule linux \
+  --config ./config/restore-jobs.linux.yml \
+  --root-dir /opt/db-restore-automation \
+  > generated-restore.cron
+
+cat generated-restore.cron
 ```
 
-Windows PowerShell:
+Install it only after review:
 
-```powershell
-$env:DB_RESTORE_SMTP_USERNAME = "restore-alerts@company.com"
-$env:DB_RESTORE_SMTP_PASSWORD = "..."
-$env:DB_RESTORE_EMAIL_FROM = "restore-alerts@company.com"
+```bash
+crontab generated-restore.cron
 ```
 
-The notifier refuses to send SMTP credentials or messages when the server does not advertise STARTTLS.
+## Operational Checklist
 
-Each notifier runs independently. A Slack failure does not prevent an email notification, and an email failure does not prevent a Slack notification.
-
-## Operational Recommendations
-
-Before scheduling a restore job:
+Before enabling an unattended restore:
 
 1. Validate the configuration.
 2. Run a dry run.
-3. Verify the selected backup file.
-4. Verify the target database.
-5. Verify credential-store access using the scheduler account.
-6. Run one supervised manual restore.
-7. Review the main log and provider logs.
-8. Generate and review the operating-system schedule.
-9. Enable alerts for failures.
-10. Test recovery procedures regularly.
+3. Verify the selected backup or PowerProtect source.
+4. Verify the destination database and relocation paths.
+5. Verify credentials using the scheduled-task account.
+6. Disable the scheduled task temporarily.
+7. Run one supervised manual restore.
+8. Review the main and provider logs.
+9. Verify the restored database.
+10. Generate or update the schedule.
+11. Enable the scheduled task.
+12. Test alert delivery.
+13. Periodically test the restore process.
 
-Never enable unattended restores against a target until its safety rules, credentials, backup selection, relocation paths, and restore behavior have been manually verified.
+Never enable unattended restores until the target, credentials, backup selection, relocation paths, safety rules, and restore behavior have been manually verified.
