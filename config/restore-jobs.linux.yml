@@ -25,6 +25,9 @@ tools:
   oracle:
     impdp: "impdp"
 
+  oracle_rman:
+    rman: "/u01/app/oracle/product/19c/dbhome_1/bin/rman"
+
 alerts:
   enabled: false
 
@@ -45,93 +48,120 @@ alerts:
     password_env: "DB_RESTORE_SMTP_PASSWORD"
     from_env: "DB_RESTORE_EMAIL_FROM"
     to:
-      - "it-team@company.com"
+    - "it-team@company.com"
 
 jobs:
-  - name: hris_postgres_restore
+- name: hris_postgres_restore
+  enabled: false
+  type: postgres
+
+  backup_path: "/mnt/c/Projects/db-backups"
+  file_pattern: "*.sql"
+
+  schedule:
+    enabled: false
+    linux_cron: "0 3 * * *"
+
+    # These Windows fields are retained because the current shared
+    # configuration validator requires them when scheduling is enabled.
+    windows_time: "03:00"
+    windows_frequency: "DAILY"
+
+  target:
+    host: "localhost"
+    port: 5432
+    database: "hris_test"
+    username: "postgres"
+    maintenance_database: "postgres"
+    credential_method: "pgpass"
+
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
+
+- name: inventory_mysql_restore
+  enabled: false
+  type: mysql
+
+  backup_path: "/mnt/c/Projects/db-backups"
+  file_pattern: "*.sql.gz"
+
+  schedule:
+    enabled: false
+    linux_cron: "30 3 * * *"
+    windows_time: "03:30"
+    windows_frequency: "DAILY"
+
+  target:
+    host: "localhost"
+    port: 3306
+    database: "inventory_test"
+    username: "mysql_restore"
+    credential_method: "defaults_file"
+
+    # This must be an actual file, not a directory.
+    # Create this file before enabling the MySQL job.
+    defaults_file: "/etc/db-restore-orchestrator/mysql.cnf"
+
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
+
+- name: accounting_oracle_restore
+  enabled: false
+  type: oracle
+
+  backup_path: "/mnt/c/Projects/db-backups"
+  file_pattern: "*.dmp"
+
+  schedule:
+    enabled: false
+    linux_cron: "0 4 * * *"
+    windows_time: "04:00"
+    windows_frequency: "DAILY"
+
+  target:
+    connect_string: "/@ACCOUNTING_TEST"
+    schema: "ACCOUNTING_TEST"
+    oracle_directory: "ORCH_DUMP_DIR"
+    credential_method: "oracle_wallet"
+
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
+
+- name: "hobs_oracle_rman_restore"
+  type: "oracle_rman"
+  enabled: true
+
+  schedule:
     enabled: true
-    type: postgres
+    linux_cron: "0 2 2 * *"
+    windows_time: ""
+    windows_frequency: ""
 
-    backup_path: "/mnt/c/Projects/db-backups"
-    file_pattern: "*.sql"
+  rman:
+    target: "/"
+    catalog: ""
+    command_file: "/opt/db-restore-automation/rman/hobs-full-restore.rman"
+    log_file: "/opt/db-restore-automation/logs/hobs-rman-restore.log"
+    credential_method: "os_auth"
+    oracle_home: "/u01/app/oracle/product/19c/dbhome_1"
+    oracle_sid: "REPLACE_WITH_ACTUAL_SID"
+    restore_scope: "full_database"
 
-    schedule:
-      enabled: true
-      linux_cron: "0 3 * * *"
-
-      # These Windows fields are retained because the current shared
-      # configuration validator requires them when scheduling is enabled.
-      windows_time: "03:00"
-      windows_frequency: "DAILY"
-
-    target:
-      host: "localhost"
-      port: 5432
-      database: "hris_test"
-      username: "postgres"
-      maintenance_database: "postgres"
-      credential_method: "pgpass"
-
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
-
-  - name: inventory_mysql_restore
-    enabled: false
-    type: mysql
-
-    backup_path: "/mnt/c/Projects/db-backups"
-    file_pattern: "*.sql.gz"
-
-    schedule:
-      enabled: false
-      linux_cron: "30 3 * * *"
-      windows_time: "03:30"
-      windows_frequency: "DAILY"
-
-    target:
-      host: "localhost"
-      port: 3306
-      database: "inventory_test"
-      username: "mysql_restore"
-      credential_method: "defaults_file"
-
-      # This must be an actual file, not a directory.
-      # Create this file before enabling the MySQL job.
-      defaults_file: "/etc/db-restore-orchestrator/mysql.cnf"
-
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
-
-  - name: accounting_oracle_restore
-    enabled: false
-    type: oracle
-
-    backup_path: "/mnt/c/Projects/db-backups"
-    file_pattern: "*.dmp"
-
-    schedule:
-      enabled: false
-      linux_cron: "0 4 * * *"
-      windows_time: "04:00"
-      windows_frequency: "DAILY"
-
-    target:
-      connect_string: "/@ACCOUNTING_TEST"
-      schema: "ACCOUNTING_TEST"
-      oracle_directory: "ORCH_DUMP_DIR"
-      credential_method: "oracle_wallet"
-
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
