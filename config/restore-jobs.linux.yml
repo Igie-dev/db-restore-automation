@@ -156,7 +156,7 @@ jobs:
     log_file: "/opt/db-restore-automation/logs/hobs-rman-restore.log"
     credential_method: "os_auth"
     oracle_home: "/u01/app/oracle/product/19c/dbhome_1"
-    oracle_sid: "REPLACE_WITH_ACTUAL_SID"
+    oracle_sid: "HOBS"
     restore_scope: "full_database"
 
   safety:

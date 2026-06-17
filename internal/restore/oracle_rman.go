@@ -55,6 +55,7 @@ func (p OracleRmanProvider) Restore(
 	logFile := strings.TrimSpace(job.RMAN.LogFile)
 	oracleHome := strings.TrimSpace(job.RMAN.OracleHome)
 	oracleSID := strings.TrimSpace(job.RMAN.OracleSID)
+	logFileConfigured := logFile != ""
 
 	rmanExecutable := strings.TrimSpace(
 		cfg.ToolPath(
@@ -133,17 +134,6 @@ func (p OracleRmanProvider) Restore(
 	}
 
 	if err := rmanValidateValue(
-		"rman.log_file",
-		logFile,
-	); err != nil {
-		return fmt.Errorf(
-			"job=%q %w",
-			jobName,
-			err,
-		)
-	}
-
-	if err := rmanValidateValue(
 		"rman.oracle_home",
 		oracleHome,
 	); err != nil {
@@ -185,18 +175,6 @@ func (p OracleRmanProvider) Restore(
 		)
 	}
 
-	absoluteLogFile, err := rmanAbsolutePath(
-		logFile,
-		"rman.log_file",
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"job=%q %w",
-			jobName,
-			err,
-		)
-	}
-
 	absoluteOracleHome, err := rmanAbsolutePath(
 		oracleHome,
 		"rman.oracle_home",
@@ -209,14 +187,39 @@ func (p OracleRmanProvider) Restore(
 		)
 	}
 
-	if rmanSamePath(
-		absoluteCommandFile,
-		absoluteLogFile,
-	) {
-		return fmt.Errorf(
-			"job=%q rman.command_file and rman.log_file must not reference the same path",
-			jobName,
+	absoluteLogFile := ""
+	if logFileConfigured {
+		absoluteLogFile, err = rmanAbsolutePath(
+			logFile,
+			"rman.log_file",
 		)
+		if err != nil {
+			return fmt.Errorf(
+				"job=%q %w",
+				jobName,
+				err,
+			)
+		}
+
+		if rmanSamePath(
+			absoluteCommandFile,
+			absoluteLogFile,
+		) {
+			return fmt.Errorf(
+				"job=%q rman.command_file and rman.log_file must not reference the same path",
+				jobName,
+			)
+		}
+
+		if err := rmanValidateLogTarget(
+			absoluteLogFile,
+		); err != nil {
+			return fmt.Errorf(
+				"job=%q %w",
+				jobName,
+				err,
+			)
+		}
 	}
 
 	if err := rmanRequireReadableRegularFile(
@@ -233,16 +236,6 @@ func (p OracleRmanProvider) Restore(
 	if err := rmanRequireDirectory(
 		absoluteOracleHome,
 		"ORACLE_HOME",
-	); err != nil {
-		return fmt.Errorf(
-			"job=%q %w",
-			jobName,
-			err,
-		)
-	}
-
-	if err := rmanValidateLogTarget(
-		absoluteLogFile,
 	); err != nil {
 		return fmt.Errorf(
 			"job=%q %w",
@@ -272,8 +265,19 @@ func (p OracleRmanProvider) Restore(
 	args = append(
 		args,
 		"cmdfile="+absoluteCommandFile,
-		"log="+absoluteLogFile,
 	)
+
+	if logFileConfigured {
+		args = append(
+			args,
+			"log="+absoluteLogFile,
+		)
+	}
+
+	logFileValue := "<not-configured; output captured by command runner>"
+	if logFileConfigured {
+		logFileValue = absoluteLogFile
+	}
 
 	p.logInfo(fmt.Sprintf(
 		"job=%s type=oracle_rman target=%s credential_method=%s restore_scope=%s command_file=%s log_file=%s oracle_home=%s oracle_sid=%s",
@@ -282,16 +286,17 @@ func (p OracleRmanProvider) Restore(
 		credentialMethod,
 		restoreScope,
 		absoluteCommandFile,
-		absoluteLogFile,
+		logFileValue,
 		absoluteOracleHome,
 		oracleSID,
 	))
 
 	p.logInfo(fmt.Sprintf(
-		"job=%s type=oracle_rman rman_executable=%s catalog_configured=%t",
+		"job=%s type=oracle_rman rman_executable=%s catalog_configured=%t rman_log_configured=%t",
 		jobName,
 		rmanExecutable,
 		catalog != "",
+		logFileConfigured,
 	))
 
 	if opts.DryRun {
@@ -299,7 +304,7 @@ func (p OracleRmanProvider) Restore(
 			"job=%s type=oracle_rman dry_run=true action=restore_skipped command_file=%s log_file=%s credential_method=%s restore_scope=%s",
 			jobName,
 			absoluteCommandFile,
-			absoluteLogFile,
+			logFileValue,
 			credentialMethod,
 			restoreScope,
 		))
@@ -323,47 +328,51 @@ func (p OracleRmanProvider) Restore(
 		)
 	}
 
-	logDirectory := filepath.Dir(absoluteLogFile)
+	var beforeLog rmanLogSnapshot
 
-	if err := os.MkdirAll(logDirectory, 0755); err != nil {
-		return fmt.Errorf(
-			"job=%q create RMAN log directory %q: %w",
-			jobName,
+	if logFileConfigured {
+		logDirectory := filepath.Dir(absoluteLogFile)
+
+		if err := os.MkdirAll(logDirectory, 0755); err != nil {
+			return fmt.Errorf(
+				"job=%q create RMAN log directory %q: %w",
+				jobName,
+				logDirectory,
+				err,
+			)
+		}
+
+		if err := rmanRequireDirectory(
 			logDirectory,
-			err,
-		)
-	}
+			"RMAN log directory",
+		); err != nil {
+			return fmt.Errorf(
+				"job=%q %w",
+				jobName,
+				err,
+			)
+		}
 
-	if err := rmanRequireDirectory(
-		logDirectory,
-		"RMAN log directory",
-	); err != nil {
-		return fmt.Errorf(
-			"job=%q %w",
-			jobName,
-			err,
-		)
-	}
+		if err := rmanValidateLogTarget(
+			absoluteLogFile,
+		); err != nil {
+			return fmt.Errorf(
+				"job=%q %w",
+				jobName,
+				err,
+			)
+		}
 
-	if err := rmanValidateLogTarget(
-		absoluteLogFile,
-	); err != nil {
-		return fmt.Errorf(
-			"job=%q %w",
-			jobName,
-			err,
+		beforeLog, err = captureRMANLogSnapshot(
+			absoluteLogFile,
 		)
-	}
-
-	beforeLog, err := captureRMANLogSnapshot(
-		absoluteLogFile,
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"job=%q inspect RMAN log before execution: %w",
-			jobName,
-			err,
-		)
+		if err != nil {
+			return fmt.Errorf(
+				"job=%q inspect RMAN log before execution: %w",
+				jobName,
+				err,
+			)
+		}
 	}
 
 	startedAt := time.Now()
@@ -378,52 +387,59 @@ func (p OracleRmanProvider) Restore(
 		},
 	)
 
-	afterLog, snapshotErr := captureRMANLogSnapshot(
-		absoluteLogFile,
-	)
-
-	logChanged := false
-	if snapshotErr != nil {
-		p.logWarn(fmt.Sprintf(
-			"job=%s type=oracle_rman action=inspect_log_failed log_file=%s error=%s",
-			jobName,
+	if logFileConfigured {
+		afterLog, snapshotErr := captureRMANLogSnapshot(
 			absoluteLogFile,
-			snapshotErr.Error(),
-		))
-	} else {
-		logChanged = rmanLogWasUpdated(
-			beforeLog,
-			afterLog,
-			startedAt,
-		)
-	}
-
-	if logChanged {
-		logTail := tailTextFile(
-			absoluteLogFile,
-			rmanLogTailMaximumBytes,
 		)
 
-		if logTail != "" {
-			if runErr != nil || result.ExitCode != 0 {
-				p.logError(fmt.Sprintf(
-					"job=%s command_category=oracle-rman rman_log_tail=%s",
-					jobName,
-					logTail,
-				))
-			} else {
-				p.logInfo(fmt.Sprintf(
-					"job=%s command_category=oracle-rman rman_log_tail=%s",
-					jobName,
-					logTail,
-				))
+		logChanged := false
+		if snapshotErr != nil {
+			p.logWarn(fmt.Sprintf(
+				"job=%s type=oracle_rman action=inspect_log_failed log_file=%s error=%s",
+				jobName,
+				absoluteLogFile,
+				snapshotErr.Error(),
+			))
+		} else {
+			logChanged = rmanLogWasUpdated(
+				beforeLog,
+				afterLog,
+				startedAt,
+			)
+		}
+
+		if logChanged {
+			logTail := tailTextFile(
+				absoluteLogFile,
+				rmanLogTailMaximumBytes,
+			)
+
+			if logTail != "" {
+				if runErr != nil || result.ExitCode != 0 {
+					p.logError(fmt.Sprintf(
+						"job=%s command_category=oracle-rman rman_log_tail=%s",
+						jobName,
+						logTail,
+					))
+				} else {
+					p.logInfo(fmt.Sprintf(
+						"job=%s command_category=oracle-rman rman_log_tail=%s",
+						jobName,
+						logTail,
+					))
+				}
 			}
+		} else {
+			p.logWarn(fmt.Sprintf(
+				"job=%s command_category=oracle-rman rman_log_updated=false log_file=%s",
+				jobName,
+				absoluteLogFile,
+			))
 		}
 	} else {
-		p.logWarn(fmt.Sprintf(
-			"job=%s command_category=oracle-rman rman_log_updated=false log_file=%s",
+		p.logInfo(fmt.Sprintf(
+			"job=%s command_category=oracle-rman rman_log_configured=false output_source=command_runner",
 			jobName,
-			absoluteLogFile,
 		))
 	}
 
@@ -460,12 +476,20 @@ func (p OracleRmanProvider) Restore(
 		)
 	}
 
-	p.logSuccess(fmt.Sprintf(
-		"job=%s command_category=oracle-rman status=success exit_code=%d rman_log_file=%s",
-		jobName,
-		result.ExitCode,
-		absoluteLogFile,
-	))
+	if logFileConfigured {
+		p.logSuccess(fmt.Sprintf(
+			"job=%s command_category=oracle-rman status=success exit_code=%d rman_log_file=%s",
+			jobName,
+			result.ExitCode,
+			absoluteLogFile,
+		))
+	} else {
+		p.logSuccess(fmt.Sprintf(
+			"job=%s command_category=oracle-rman status=success exit_code=%d rman_log_file=not_configured output_source=command_runner",
+			jobName,
+			result.ExitCode,
+		))
+	}
 
 	return nil
 }
@@ -985,4 +1009,3 @@ func (p OracleRmanProvider) logSuccess(
 		p.Logger.Success(message)
 	}
 }
-

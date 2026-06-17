@@ -1,0 +1,16 @@
+SET DBID 419767240;
+
+RUN {
+    ALLOCATE CHANNEL CH0 TYPE 'SBT_TAPE'
+        TRACE 2
+        PARMS 'SBT_LIBRARY=/home/oracle/opt/dpsapps/rmanagent/lib/libddobk.so, ENV=(STORAGE_UNIT=HOBS_Oracle_Database_Production_-emvlinfbacp-03d04, BACKUP_HOST=10.100.200.53, RMAN_AGENT_HOME=/home/oracle/opt/dpsapps/rmanagent, SCHEDULED_RESTORE=TRUE, DDBOOST_COMPRESSED_RESTORE=TRUE)';
+
+    SET COMMAND ID TO 'R_automated_1780887911';
+
+    RESTORE CONTROLFILE FROM
+        './PLCTLP-57c11141-03cb-4718-80b8-29ffefbc60dd/c-419767240-20260616-08';
+
+    ALTER DATABASE MOUNT;
+
+    RELEASE CHANNEL CH0;
+}
