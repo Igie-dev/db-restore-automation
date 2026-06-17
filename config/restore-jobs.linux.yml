@@ -139,8 +139,8 @@ jobs:
     - "production"
     - "live"
 
-- name: "hobs_oracle_rman_restore"
-  type: "oracle_rman"
+- name: hobs_oracle_rman_restore
+  type: oracle_rman
   enabled: true
 
   schedule:
