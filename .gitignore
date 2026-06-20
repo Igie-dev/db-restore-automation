@@ -54,8 +54,10 @@ Thumbs.db
 .idea/
 .vscode/
 
-.codex
-./graphify-out
+.codex/
+graphify-out/
+.codegraph/
+.claude/
 
 db-restore-automation
 db-restore-automation.exe
