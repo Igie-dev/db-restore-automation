@@ -563,16 +563,6 @@ func commandExitCode(
 	return -1
 }
 
-func status(
-	exitCode int,
-) string {
-	if exitCode == 0 {
-		return "success"
-	}
-
-	return "failed"
-}
-
 func safeName(
 	value string,
 ) string {

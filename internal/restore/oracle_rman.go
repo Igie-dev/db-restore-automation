@@ -251,6 +251,16 @@ func (p OracleRmanProvider) Restore(
 		)
 	}
 
+	// Resolve the RMAN executable against ORACLE_HOME/bin when a bare command
+	// name was configured. On Linux, rman normally lives in $ORACLE_HOME/bin
+	// and is not on the default PATH. The augmented PATH built below cannot help
+	// locate it, because Go's exec.Command resolves a bare executable name
+	// against the parent process PATH, not the child command's Env.
+	resolvedExecutable := rmanResolveExecutable(
+		rmanExecutable,
+		absoluteOracleHome,
+	)
+
 	environment := rmanBuildEnvironment(
 		absoluteOracleHome,
 		oracleSID,
@@ -290,7 +300,7 @@ func (p OracleRmanProvider) Restore(
 	p.logInfo(fmt.Sprintf(
 		"job=%s type=oracle_rman rman_executable=%s catalog_configured=%t",
 		jobName,
-		rmanExecutable,
+		resolvedExecutable,
 		catalog != "",
 	))
 
@@ -315,11 +325,11 @@ func (p OracleRmanProvider) Restore(
 		)
 	}
 
-	if !shell.ExecutableAvailable(rmanExecutable) {
+	if !shell.ExecutableAvailable(resolvedExecutable) {
 		return fmt.Errorf(
 			"job=%q Oracle RMAN executable not found or not executable: %q",
 			jobName,
-			rmanExecutable,
+			resolvedExecutable,
 		)
 	}
 
@@ -372,7 +382,7 @@ func (p OracleRmanProvider) Restore(
 		ctx,
 		shell.Command{
 			Category:   "oracle-rman",
-			Executable: rmanExecutable,
+			Executable: resolvedExecutable,
 			Args:       append([]string(nil), args...),
 			Env:        append([]string(nil), environment...),
 		},
@@ -729,6 +739,45 @@ func rmanValidOracleSID(value string) bool {
 	return true
 }
 
+func rmanResolveExecutable(
+	configured string,
+	oracleHome string,
+) string {
+	configured = strings.TrimSpace(configured)
+
+	// An explicit path (absolute or relative with a separator) is honoured as
+	// configured and never rewritten.
+	if configured == "" ||
+		strings.ContainsAny(configured, `/\`) {
+		return configured
+	}
+
+	oracleHome = strings.TrimSpace(oracleHome)
+	if oracleHome == "" {
+		return configured
+	}
+
+	candidate := filepath.Join(
+		oracleHome,
+		"bin",
+		configured,
+	)
+
+	if runtime.GOOS == "windows" &&
+		filepath.Ext(candidate) == "" {
+		candidate += ".exe"
+	}
+
+	info, err := os.Stat(candidate)
+	if err == nil && info.Mode().IsRegular() {
+		return candidate
+	}
+
+	// Fall back to the bare name so hosts that already expose rman on PATH keep
+	// working unchanged.
+	return configured
+}
+
 func rmanBuildEnvironment(
 	oracleHome string,
 	oracleSID string,
@@ -768,6 +817,30 @@ func rmanBuildEnvironment(
 		"PATH",
 		combinedPath,
 	)
+
+	// On Linux the rman binary is dynamically linked against the Oracle client
+	// libraries in $ORACLE_HOME/lib. Without that directory on LD_LIBRARY_PATH
+	// rman fails to start with a missing-shared-library error. Windows resolves
+	// these libraries through ORACLE_HOME directly, so this is skipped there.
+	if runtime.GOOS != "windows" {
+		oracleLib := filepath.Join(
+			oracleHome,
+			"lib",
+		)
+
+		combinedLibraryPath := oracleLib
+
+		currentLibraryPath := os.Getenv("LD_LIBRARY_PATH")
+		if strings.TrimSpace(currentLibraryPath) != "" {
+			combinedLibraryPath += pathSeparator + currentLibraryPath
+		}
+
+		environment = rmanSetEnvironmentValue(
+			environment,
+			"LD_LIBRARY_PATH",
+			combinedLibraryPath,
+		)
+	}
 
 	return environment
 }

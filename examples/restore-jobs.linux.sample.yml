@@ -25,6 +25,11 @@ tools:
   oracle:
     impdp: "impdp"
 
+  oracle_rman:
+    # A bare "rman" is resolved against <oracle_home>/bin automatically.
+    # Provide an absolute path here only to override that resolution.
+    rman: "rman"
+
 alerts:
   enabled: false
 
@@ -59,11 +64,6 @@ jobs:
       enabled: true
       linux_cron: "0 3 * * *"
 
-      # These Windows fields are retained because the current shared
-      # configuration validator requires them when scheduling is enabled.
-      windows_time: "03:00"
-      windows_frequency: "DAILY"
-
     target:
       host: "localhost"
       port: 5432
@@ -89,8 +89,6 @@ jobs:
     schedule:
       enabled: false
       linux_cron: "30 3 * * *"
-      windows_time: "03:30"
-      windows_frequency: "DAILY"
 
     target:
       host: "localhost"
@@ -120,14 +118,39 @@ jobs:
     schedule:
       enabled: false
       linux_cron: "0 4 * * *"
-      windows_time: "04:00"
-      windows_frequency: "DAILY"
 
     target:
       connect_string: "/@ACCOUNTING_TEST"
       schema: "ACCOUNTING_TEST"
       oracle_directory: "ORCH_DUMP_DIR"
       credential_method: "oracle_wallet"
+
+    safety:
+      require_confirmation: false
+      block_if_name_contains:
+        - "prod"
+        - "production"
+        - "live"
+
+  - name: sales_rman_restore
+    # Oracle RMAN runs a DBA-approved command file; it does not use
+    # backup_path/file_pattern. Set enabled: true after the command_file,
+    # log_file directory, and oracle_home below exist on the Oracle host.
+    enabled: false
+    type: oracle_rman
+
+    schedule:
+      enabled: false
+      linux_cron: "0 2 * * *"
+
+    rman:
+      target: "/"                       # OS authentication; use "/@TNS_ALIAS" for an Oracle Wallet
+      command_file: "/opt/db-restore-orchestrator/rman/restore_sales.rman"
+      log_file: "/opt/db-restore-orchestrator/logs/sales_rman.log"
+      credential_method: "os_auth"
+      oracle_home: "/u01/app/oracle/product/19c/dbhome_1"
+      oracle_sid: "SALESTST"
+      restore_scope: "full_database"
 
     safety:
       require_confirmation: false

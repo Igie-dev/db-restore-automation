@@ -358,15 +358,6 @@ func toolPath(
 	return ""
 }
 
-func defaultString(value string, fallback string) string {
-	value = strings.TrimSpace(value)
-	if value != "" {
-		return value
-	}
-
-	return strings.TrimSpace(fallback)
-}
-
 func normalizeToken(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }

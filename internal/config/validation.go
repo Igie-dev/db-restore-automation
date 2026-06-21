@@ -5,6 +5,7 @@ import (
 	"net/mail"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -1196,7 +1197,14 @@ func samePath(left string, right string) bool {
 	left = filepath.Clean(strings.TrimSpace(left))
 	right = filepath.Clean(strings.TrimSpace(right))
 
-	return strings.EqualFold(left, right)
+	// Match the runtime comparison in the RMAN provider: Windows paths are
+	// case-insensitive, while Linux paths that differ only in case are distinct
+	// files and must not be treated as the same path.
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(left, right)
+	}
+
+	return left == right
 }
 
 func validateAlerts(

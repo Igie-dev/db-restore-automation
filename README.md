@@ -625,6 +625,60 @@ RMAN command files must not contain passwords.
 
 Machines with no enabled RMAN jobs do not need the repository `rman` folder.
 
+### Example RMAN job
+
+```yaml
+tools:
+  oracle_rman:
+    # A bare "rman" is resolved against <oracle_home>/bin automatically (see
+    # below). Provide an absolute path here only to override that resolution.
+    rman: "rman"
+
+jobs:
+  - name: sales_rman_restore
+    enabled: true
+    type: oracle_rman
+
+    schedule:
+      enabled: true
+      linux_cron: "0 2 * * *"
+      windows_time: "02:00"
+      windows_frequency: "DAILY"
+
+    rman:
+      target: "/"                       # OS authentication; use "/@TNS_ALIAS" for a wallet
+      command_file: "/opt/db-restore/rman/restore_sales.rman"
+      log_file: "/opt/db-restore/logs/sales_rman.log"
+      credential_method: "os_auth"
+      oracle_home: "/u01/app/oracle/product/19c/dbhome_1"
+      oracle_sid: "SALESTST"
+      restore_scope: "full_database"
+
+    safety:
+      require_confirmation: false
+      block_if_name_contains:
+        - "prod"
+        - "production"
+        - "live"
+```
+
+The `target` and `command_file` / `log_file` paths must not contain inline
+passwords. `command_file` and `log_file` must resolve to different paths.
+
+### Executable and library resolution (Linux)
+
+The provider exports `ORACLE_HOME`, `ORACLE_SID`, and `PATH` (with
+`<oracle_home>/bin` prepended) to the RMAN process. On Linux it also prepends
+`<oracle_home>/lib` to `LD_LIBRARY_PATH` so the dynamically linked `rman` binary
+can load the Oracle client libraries.
+
+When `tools.oracle_rman.rman` is a bare command name (no path separator), the
+binary is located at `<oracle_home>/bin/rman` (`rman.exe` on Windows) when that
+file exists, and otherwise falls back to a `PATH` lookup. This means a correctly
+configured `oracle_home` is enough to run RMAN even when `rman` is not on the
+service account's `PATH`. Provide an absolute path in `tools.oracle_rman.rman`
+to bypass this resolution entirely.
+
 ## Dell PowerProtect MSSQL Restore Behavior
 
 PowerProtect restores use `ddbmsqlrc.exe`.

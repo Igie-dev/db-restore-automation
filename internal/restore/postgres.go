@@ -967,15 +967,6 @@ func requireFile(
 	return nil
 }
 
-func gunzipToTemp(
-	path string,
-) (string, error) {
-	return gunzipToTempContext(
-		context.Background(),
-		path,
-	)
-}
-
 func gunzipToTempContext(
 	ctx context.Context,
 	path string,

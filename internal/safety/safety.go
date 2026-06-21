@@ -243,37 +243,6 @@ func confirmationRequired(
 	return required, nil
 }
 
-// Values returns the non-empty target-oriented values inspected by the safety
-// checker. It remains exported for callers that display or test safety scope.
-func Values(job config.JobConfig) []string {
-	candidates := safetyValues(job)
-
-	values := make(
-		[]string,
-		0,
-		len(candidates),
-	)
-
-	seen := make(map[string]struct{})
-
-	for _, candidate := range candidates {
-		value := strings.TrimSpace(candidate.Value)
-		if value == "" {
-			continue
-		}
-
-		normalized := strings.ToLower(value)
-		if _, exists := seen[normalized]; exists {
-			continue
-		}
-
-		seen[normalized] = struct{}{}
-		values = append(values, value)
-	}
-
-	return values
-}
-
 func safetyValues(
 	job config.JobConfig,
 ) []safetyValue {
@@ -441,11 +410,6 @@ func parseEnvironmentBoolean(
 			value,
 		)
 	}
-}
-
-func envTrue(value string) bool {
-	parsed, err := parseEnvironmentBoolean(value)
-	return err == nil && parsed
 }
 
 func (c Checker) logInfo(message string) {
