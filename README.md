@@ -122,6 +122,8 @@ The external tools, lockbox, credential files, and database connectivity are sep
 ## CLI Commands
 
 ```text
+db-restore-automation interactive
+
 db-restore-automation validate --config <config-file>
 
 db-restore-automation restore \
@@ -137,6 +139,36 @@ db-restore-automation schedule windows \
   --config <config-file> \
   --root-dir <root-directory>
 ```
+
+### Interactive mode
+
+For ad-hoc operation you do not need to remember flags. Run the guided menu:
+
+```text
+db-restore-automation interactive
+```
+
+Running the executable with no arguments from a terminal launches the same menu
+automatically. (When stdin is redirected — scripts, pipes, cron — the tool
+prints usage instead of waiting for input, so automation is unaffected.)
+
+The menu walks you through each action and lets you pick a restore job from a
+titled list instead of typing its name:
+
+```text
+Available jobs:
+   1) hris_postgres_restore      [postgres          ] enabled
+   2) inventory_mysql_restore    [mysql             ] disabled
+   3) accounting_oracle_restore  [oracle            ] disabled
+   4) sales_rman_restore         [oracle_rman       ] disabled
+   A) all enabled jobs           (run every enabled job)
+   0) Back
+```
+
+Restores default to a dry run and ask for confirmation before any real change.
+Interactive mode only collects your choices; it then runs the same
+`validate`, `restore`, and `schedule` logic as the flag-based commands, so
+safety checks and confirmation rules are identical.
 
 Display command help:
 

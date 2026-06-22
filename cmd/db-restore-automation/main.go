@@ -52,6 +52,14 @@ func runWithContext(
 	}
 
 	if len(args) == 0 {
+		// With no arguments, launch the guided menu when attached to a
+		// terminal. When stdin is redirected (scripts, pipes, cron) fall back
+		// to printing usage so non-interactive callers are not left waiting on
+		// a prompt that will never be answered.
+		if stdinIsInteractive() {
+			return app.RunInteractive(ctx, os.Stdin, os.Stdout)
+		}
+
 		usage()
 		return exitUsage
 	}
@@ -64,6 +72,13 @@ func runWithContext(
 	case "help", "-h", "--help":
 		usage()
 		return exitOK
+
+	case "interactive", "menu":
+		return app.RunInteractive(
+			ctx,
+			os.Stdin,
+			os.Stdout,
+		)
 
 	case "validate":
 		return runValidateCommand(
@@ -444,6 +459,15 @@ func printUnexpectedArguments(
 	flagSet.Usage()
 }
 
+func stdinIsInteractive() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
 func cancelledExitCode(
 	command string,
 	err error,
@@ -462,6 +486,11 @@ func usage() {
 	fmt.Fprintln(
 		os.Stderr,
 		"Usage:",
+	)
+
+	fmt.Fprintln(
+		os.Stderr,
+		"  db-restore-automation interactive",
 	)
 
 	fmt.Fprintln(
@@ -491,6 +520,11 @@ func usage() {
 	fmt.Fprintln(
 		os.Stderr,
 		"Commands:",
+	)
+
+	fmt.Fprintln(
+		os.Stderr,
+		"  interactive  Launch the guided menu to pick an action and job by title.",
 	)
 
 	fmt.Fprintln(
