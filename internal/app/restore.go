@@ -18,6 +18,7 @@ type RestoreOptions struct {
 	ConfigPath string
 	JobName    string
 	DryRun     bool
+	Timeout    time.Duration // default per-job timeout when the YAML field is absent
 }
 
 func RunRestore(ctx context.Context, opts RestoreOptions) int {
@@ -138,6 +139,33 @@ func RunRestore(ctx context.Context, opts RestoreOptions) int {
 
 		processedJobs++
 
+		jobCtx := ctx
+		jobCancel := func() {}
+
+		if d, ok := job.JobTimeout(); ok {
+			var derived context.CancelFunc
+			jobCtx, derived = context.WithTimeout(ctx, d)
+			jobCancel = derived
+
+			logger.Info(fmt.Sprintf(
+				"job=%s type=%s timeout=%s source=config",
+				sanitizeLogValue(jobName),
+				sanitizeLogValue(jobType),
+				d,
+			))
+		} else if opts.Timeout > 0 {
+			var derived context.CancelFunc
+			jobCtx, derived = context.WithTimeout(ctx, opts.Timeout)
+			jobCancel = derived
+
+			logger.Info(fmt.Sprintf(
+				"job=%s type=%s timeout=%s source=cli_default",
+				sanitizeLogValue(jobName),
+				sanitizeLogValue(jobType),
+				opts.Timeout,
+			))
+		}
+
 		started := time.Now()
 		source := job.SourceText()
 		target := job.TargetText()
@@ -230,15 +258,23 @@ func RunRestore(ctx context.Context, opts RestoreOptions) int {
 		}
 
 		if result == "success" {
-			if err := ctx.Err(); err != nil {
+			if err := jobCtx.Err(); err != nil {
 				result = "failure"
 				errorMessage = err.Error()
-				cancelled = true
+
+				// A per-job timeout fails only this job. The run is marked
+				// cancelled only when the parent context itself is done.
+				reason := "job_timeout_before_restore"
+				if ctx.Err() != nil {
+					cancelled = true
+					reason = "context_cancelled_before_restore"
+				}
 
 				logger.Error(fmt.Sprintf(
-					"job=%s type=%s result=failure reason=context_cancelled_before_restore error=%s",
+					"job=%s type=%s result=failure reason=%s error=%s",
 					sanitizeLogValue(jobName),
 					sanitizeLogValue(jobType),
+					reason,
 					sanitizeLogValue(errorMessage),
 				))
 			}
@@ -265,7 +301,7 @@ func RunRestore(ctx context.Context, opts RestoreOptions) int {
 				))
 
 				restoreErr := provider.Restore(
-					ctx,
+					jobCtx,
 					cfg,
 					job,
 					restore.Options{
@@ -287,6 +323,8 @@ func RunRestore(ctx context.Context, opts RestoreOptions) int {
 				}
 			}
 		}
+
+		jobCancel()
 
 		finished := time.Now()
 		duration := finished.Sub(started)

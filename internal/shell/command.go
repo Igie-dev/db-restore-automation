@@ -162,7 +162,38 @@ func (r Runner) Run(
 	}
 
 	startedAt := time.Now()
-	runErr := command.Run()
+
+	var runErr error
+
+	if startErr := command.Start(); startErr != nil {
+		runErr = startErr
+	} else {
+		done := make(chan struct{})
+
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+					r.logInfo(fmt.Sprintf(
+						"command_category=%s status=running elapsed=%s stdout_file=%s stderr_file=%s",
+						category,
+						time.Since(startedAt).Round(time.Second),
+						stdoutPath,
+						stderrPath,
+					))
+				}
+			}
+		}()
+
+		runErr = command.Wait()
+		close(done)
+	}
+
 	duration := time.Since(startedAt).Round(
 		time.Millisecond,
 	)

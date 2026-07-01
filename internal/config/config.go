@@ -1,6 +1,9 @@
 package config
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	TypePostgres          = "postgres"
@@ -85,19 +88,20 @@ type EmailConfig struct {
 }
 
 type JobConfig struct {
-	Name         string              `yaml:"name"`
-	Enabled      *bool               `yaml:"enabled"`
-	Type         string              `yaml:"type"`
-	BackupPath   string              `yaml:"backup_path"`
-	FilePattern  string              `yaml:"file_pattern"`
-	Schedule     ScheduleConfig      `yaml:"schedule"`
-	Target       TargetConfig        `yaml:"target"`
-	Source       SourceConfig        `yaml:"source"`
+	Name         string             `yaml:"name"`
+	Enabled      *bool              `yaml:"enabled"`
+	Type         string             `yaml:"type"`
+	BackupPath   string             `yaml:"backup_path"`
+	FilePattern  string             `yaml:"file_pattern"`
+	Timeout      string             `yaml:"timeout"`
+	Schedule     ScheduleConfig     `yaml:"schedule"`
+	Target       TargetConfig       `yaml:"target"`
+	Source       SourceConfig       `yaml:"source"`
 	PowerProtect PowerProtectConfig `yaml:"powerprotect"`
-	RMAN         RMANConfig          `yaml:"rman"`
-	Relocate     []RelocateConfig    `yaml:"relocate"`
-	Safety       SafetyConfig        `yaml:"safety"`
-	Tools        ToolsConfig         `yaml:"tools"`
+	RMAN         RMANConfig         `yaml:"rman"`
+	Relocate     []RelocateConfig   `yaml:"relocate"`
+	Safety       SafetyConfig       `yaml:"safety"`
+	Tools        ToolsConfig        `yaml:"tools"`
 }
 
 type ScheduleConfig struct {
@@ -163,6 +167,22 @@ func (j JobConfig) TypeName() string {
 
 func (j JobConfig) IsEnabled() bool {
 	return j.Enabled != nil && *j.Enabled
+}
+
+// JobTimeout returns the parsed per-job timeout and true when a timeout is
+// configured. Returns 0 and false when the timeout field is empty.
+func (j JobConfig) JobTimeout() (time.Duration, bool) {
+	raw := strings.TrimSpace(j.Timeout)
+	if raw == "" {
+		return 0, false
+	}
+
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, false
+	}
+
+	return d, true
 }
 
 func (j JobConfig) ScheduleEnabled() bool {

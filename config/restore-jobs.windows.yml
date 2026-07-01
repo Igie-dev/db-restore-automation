@@ -57,6 +57,7 @@ jobs:
   - name: WideWorldImportersRestore
     enabled: true
     type: mssql_powerprotect
+    timeout: "2h"
 
     schedule:
       enabled: true
@@ -102,6 +103,7 @@ jobs:
   - name: AdventureWorksRestore
     enabled: true
     type: mssql_powerprotect
+    timeout: "2h"
 
     schedule:
       enabled: true

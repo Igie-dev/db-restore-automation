@@ -195,6 +195,12 @@ func runRestoreCommand(
 		"validate and log restore actions without executing provider commands",
 	)
 
+	timeout := flagSet.Duration(
+		"timeout",
+		0,
+		"default per-job wall-clock timeout when a job has no timeout in its config (e.g. 2h, 90m, 1h30m); per-job config takes precedence",
+	)
+
 	if exitCode, stop := parseFlags(
 		flagSet,
 		args,
@@ -241,6 +247,7 @@ func runRestoreCommand(
 			ConfigPath: normalizedConfigPath,
 			JobName:    normalizedJobName,
 			DryRun:     *dryRun,
+			Timeout:    *timeout,
 		},
 	)
 }

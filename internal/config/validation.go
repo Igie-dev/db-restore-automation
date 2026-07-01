@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -149,6 +150,12 @@ func Validate(cfg Config) error {
 			&validationErrors,
 			label,
 			job.Schedule,
+		)
+
+		validateTimeout(
+			&validationErrors,
+			label,
+			job.Timeout,
 		)
 
 		switch jobType {
@@ -850,6 +857,41 @@ func validateSchedule(
 			*validationErrors,
 			fmt.Sprintf(
 				"job=%q schedule.windows_frequency must be DAILY",
+				label,
+			),
+		)
+	}
+}
+
+func validateTimeout(
+	validationErrors *[]string,
+	label string,
+	timeout string,
+) {
+	timeout = strings.TrimSpace(timeout)
+	if timeout == "" {
+		return
+	}
+
+	d, err := time.ParseDuration(timeout)
+	if err != nil {
+		*validationErrors = append(
+			*validationErrors,
+			fmt.Sprintf(
+				"job=%q timeout %q is not a valid Go duration (e.g. 2h, 90m, 1h30m)",
+				label,
+				timeout,
+			),
+		)
+
+		return
+	}
+
+	if d <= 0 {
+		*validationErrors = append(
+			*validationErrors,
+			fmt.Sprintf(
+				"job=%q timeout must be a positive duration",
 				label,
 			),
 		)
