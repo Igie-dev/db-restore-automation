@@ -201,6 +201,12 @@ func runRestoreCommand(
 		"default per-job wall-clock timeout when a job has no timeout in its config (e.g. 2h, 90m, 1h30m); per-job config takes precedence",
 	)
 
+	concurrency := flagSet.Int(
+		"concurrency",
+		1,
+		"maximum number of jobs to restore at the same time (1 = sequential; higher runs a bounded worker pool so a slow or hung job does not block the others)",
+	)
+
 	if exitCode, stop := parseFlags(
 		flagSet,
 		args,
@@ -244,10 +250,11 @@ func runRestoreCommand(
 	return app.RunRestore(
 		ctx,
 		app.RestoreOptions{
-			ConfigPath: normalizedConfigPath,
-			JobName:    normalizedJobName,
-			DryRun:     *dryRun,
-			Timeout:    *timeout,
+			ConfigPath:  normalizedConfigPath,
+			JobName:     normalizedJobName,
+			DryRun:      *dryRun,
+			Timeout:     *timeout,
+			Concurrency: *concurrency,
 		},
 	)
 }

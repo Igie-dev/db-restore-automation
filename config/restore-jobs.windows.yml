@@ -25,9 +25,6 @@ tools:
     # PATH of the Windows Task Scheduler service account.
     mysql: "mysql.exe"
 
-  oracle:
-    impdp: "C:\\oracle\\product\\19c\\dbhome_1\\bin\\impdp.exe"
-
   mssql_powerprotect:
     ddbmsqlrc: "C:\\Program Files\\DPSAPPS\\MSAPPAGENT\\bin\\ddbmsqlrc.exe"
 
@@ -51,170 +48,147 @@ alerts:
     password_env: "DB_RESTORE_SMTP_PASSWORD"
     from_env: "DB_RESTORE_EMAIL_FROM"
     to:
-      - "it-team@company.com"
+    - "it-team@company.com"
 
 jobs:
-  - name: WideWorldImportersRestore
+- name: WideWorldImportersRestore
+  enabled: true
+  type: mssql_powerprotect
+  timeout: "6h"
+
+  schedule:
     enabled: true
-    type: mssql_powerprotect
-    timeout: "2h"
+    windows_time: "03:00"
+    windows_frequency: "DAILY"
 
-    schedule:
-      enabled: true
-      windows_time: "03:00"
-      windows_frequency: "DAILY"
+  powerprotect:
+    dd_host: "192.168.20.251"
+    dd_user: "sql-ppdm-user"
+    device_path: "/sql-ppdm-user/sample-device-path"
+    lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
+    client: "source-sql-server.domain.local"
+    skip_client_resolution: true
+    restore_type: "normal"
+    credential_method: "lockbox"
 
-    powerprotect:
-      dd_host: "192.168.20.251"
-      dd_user: "sql-ppdm-user"
-      device_path: "/sql-ppdm-user/sample-device-path"
-      lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
-      client: "source-sql-server.domain.local"
-      skip_client_resolution: true
-      restore_type: "normal"
-      credential_method: "lockbox"
+  source:
+    database: "WideWorldImporters"
 
-    source:
-      database: "WideWorldImporters"
+  target:
+    database: "WideWorldImporters_Test"
 
-    target:
-      database: "WideWorldImporters_Test"
+  relocate:
+  - logical_name: "WWI_InMemory_Data_1"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test_InMemory_Data_1"
 
-    relocate:
-      - logical_name: "WWI_InMemory_Data_1"
-        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test_InMemory_Data_1"
+  - logical_name: "WWI_Log"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test.ldf"
 
-      - logical_name: "WWI_Log"
-        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test.ldf"
+  - logical_name: "WWI_Primary"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test.mdf"
 
-      - logical_name: "WWI_Primary"
-        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test.mdf"
+  - logical_name: "WWI_UserData"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test_UserData.ndf"
 
-      - logical_name: "WWI_UserData"
-        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test_UserData.ndf"
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
 
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
+- name: AdventureWorksRestore
+  enabled: true
+  type: mssql_powerprotect
+  timeout: "6h"
 
-  - name: AdventureWorksRestore
+  schedule:
     enabled: true
-    type: mssql_powerprotect
-    timeout: "2h"
+    windows_time: "03:30"
+    windows_frequency: "DAILY"
 
-    schedule:
-      enabled: true
-      windows_time: "03:30"
-      windows_frequency: "DAILY"
+  powerprotect:
+    dd_host: "192.168.20.251"
+    dd_user: "sql-ppdm-user"
+    device_path: "/sql-ppdm-user/sample-device-path"
+    lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
+    client: "source-sql-server.domain.local"
+    skip_client_resolution: true
+    restore_type: "normal"
+    credential_method: "lockbox"
 
-    powerprotect:
-      dd_host: "192.168.20.251"
-      dd_user: "sql-ppdm-user"
-      device_path: "/sql-ppdm-user/sample-device-path"
-      lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
-      client: "source-sql-server.domain.local"
-      skip_client_resolution: true
-      restore_type: "normal"
-      credential_method: "lockbox"
+  source:
+    database: "AdventureWorks"
 
-    source:
-      database: "AdventureWorks"
+  target:
+    database: "AdventureWorks_Test"
 
-    target:
-      database: "AdventureWorks_Test"
+  relocate:
+  - logical_name: "AdventureWorks"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test.mdf"
 
-    relocate:
-      - logical_name: "AdventureWorks"
-        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test.mdf"
+  - logical_name: "AdventureWorks_log"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test_log.ldf"
 
-      - logical_name: "AdventureWorks_log"
-        physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test_log.ldf"
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
 
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
+- name: hris_postgres_restore
+  enabled: true
+  type: postgres
+  timeout: "2h"
 
-  - name: hris_postgres_restore
+  backup_path: "C:\\Projects\\db-backups"
+  file_pattern: "*.sql"
+
+  schedule:
     enabled: true
-    type: postgres
+    windows_time: "14:30"
+    windows_frequency: "DAILY"
 
-    backup_path: "C:\\Projects\\db-backups"
-    file_pattern: "*.sql"
+  target:
+    host: "localhost"
+    port: 5432
+    database: "hris_test"
+    username: "postgres"
+    maintenance_database: "postgres"
+    credential_method: "pgpass"
 
-    schedule:
-      enabled: true
-      windows_time: "14:30"
-      windows_frequency: "DAILY"
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
 
-    target:
-      host: "localhost"
-      port: 5432
-      database: "hris_test"
-      username: "postgres"
-      maintenance_database: "postgres"
-      credential_method: "pgpass"
+- name: inventory_mysql_restore
+  enabled: true
+  type: mysql
+  timeout: "2h"
 
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
+  backup_path: "C:\\Projects\\db-backups\\mysql\\inventory"
+  file_pattern: "*.sql.gz"
 
-  - name: inventory_mysql_restore
+  schedule:
     enabled: true
-    type: mysql
+    windows_time: "03:30"
+    windows_frequency: "DAILY"
 
-    backup_path: "C:\\Projects\\db-backups\\mysql\\inventory"
-    file_pattern: "*.sql.gz"
+  target:
+    host: "localhost"
+    port: 3306
+    database: "inventory_test"
+    username: "inventory_restore"
+    credential_method: "login_path"
+    login_path: "inventory_test"
 
-    schedule:
-      enabled: true
-      windows_time: "03:30"
-      windows_frequency: "DAILY"
-
-    target:
-      host: "localhost"
-      port: 3306
-      database: "inventory_test"
-      username: "inventory_restore"
-      credential_method: "login_path"
-      login_path: "inventory_test"
-
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
-
-  - name: accounting_oracle_restore
-    enabled: true
-    type: oracle
-
-    backup_path: "C:\\Projects\\db-backups\\oracle\\accounting"
-    file_pattern: "*.dmp"
-
-    schedule:
-      enabled: true
-      windows_time: "04:00"
-      windows_frequency: "DAILY"
-
-    target:
-      connect_string: "/@ACCOUNTING_TEST"
-      schema: "ACCOUNTING_TEST"
-      oracle_directory: "ORCH_DUMP_DIR"
-      credential_method: "oracle_wallet"
-
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"

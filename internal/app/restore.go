@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"db-restore-automation/internal/alerts"
 	"db-restore-automation/internal/backup"
 	"db-restore-automation/internal/config"
+	"db-restore-automation/internal/logging"
 	"db-restore-automation/internal/restore"
 	"db-restore-automation/internal/safety"
 )
@@ -19,6 +21,10 @@ type RestoreOptions struct {
 	JobName    string
 	DryRun     bool
 	Timeout    time.Duration // default per-job timeout when the YAML field is absent
+	// Concurrency is the maximum number of jobs to restore at the same time.
+	// A value <= 1 preserves the original strictly-sequential behavior; a
+	// higher value runs that many jobs in parallel via a bounded worker pool.
+	Concurrency int
 }
 
 func RunRestore(ctx context.Context, opts RestoreOptions) int {
@@ -112,275 +118,111 @@ func RunRestore(ctx context.Context, opts RestoreOptions) int {
 		))
 	}
 
-	for _, job := range jobs {
-		jobName := strings.TrimSpace(job.Name)
-		jobType := strings.TrimSpace(job.TypeName())
+	eng := restoreEngine{
+		logger:       logger,
+		cfg:          cfg,
+		opts:         opts,
+		resolver:     resolver,
+		checker:      checker,
+		alertManager: alertManager,
+		host:         host,
+	}
 
-		if !job.IsEnabled() {
-			logger.Info(fmt.Sprintf(
-				"job=%s type=%s enabled=false action=skip",
-				sanitizeLogValue(jobName),
-				sanitizeLogValue(jobType),
-			))
-			continue
+	concurrency := opts.Concurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+
+	if concurrency == 1 {
+		for _, job := range jobs {
+			if skip := logDisabledJob(logger, job); skip {
+				continue
+			}
+
+			if err := ctx.Err(); err != nil {
+				cancelled = true
+				failures++
+
+				logger.Error(fmt.Sprintf(
+					"restore_run=cancelled before_job=%s error=%s",
+					sanitizeLogValue(strings.TrimSpace(job.Name)),
+					sanitizeLogValue(err.Error()),
+				))
+				break
+			}
+
+			processedJobs++
+
+			outcome := eng.runJob(ctx, job)
+			if outcome.failed {
+				failures++
+			}
+			if outcome.cancelled {
+				cancelled = true
+			}
+
+			if err := ctx.Err(); err != nil {
+				cancelled = true
+
+				logger.Warn(fmt.Sprintf(
+					"restore_run=context_cancelled action=stop_remaining_jobs error=%s",
+					sanitizeLogValue(err.Error()),
+				))
+				break
+			}
 		}
-
-		if err := ctx.Err(); err != nil {
-			cancelled = true
-			failures++
-
-			logger.Error(fmt.Sprintf(
-				"restore_run=cancelled before_job=%s error=%s",
-				sanitizeLogValue(jobName),
-				sanitizeLogValue(err.Error()),
-			))
-			break
-		}
-
-		processedJobs++
-
-		jobCtx := ctx
-		jobCancel := func() {}
-
-		if d, ok := job.JobTimeout(); ok {
-			var derived context.CancelFunc
-			jobCtx, derived = context.WithTimeout(ctx, d)
-			jobCancel = derived
-
-			logger.Info(fmt.Sprintf(
-				"job=%s type=%s timeout=%s source=config",
-				sanitizeLogValue(jobName),
-				sanitizeLogValue(jobType),
-				d,
-			))
-		} else if opts.Timeout > 0 {
-			var derived context.CancelFunc
-			jobCtx, derived = context.WithTimeout(ctx, opts.Timeout)
-			jobCancel = derived
-
-			logger.Info(fmt.Sprintf(
-				"job=%s type=%s timeout=%s source=cli_default",
-				sanitizeLogValue(jobName),
-				sanitizeLogValue(jobType),
-				opts.Timeout,
-			))
-		}
-
-		started := time.Now()
-		source := job.SourceText()
-		target := job.TargetText()
-		credentialMethod := job.CredentialMethod()
-
+	} else {
 		logger.Info(fmt.Sprintf(
-			"job=%s type=%s source_database=%s target=%s credential_method=%s status=start",
-			sanitizeLogValue(jobName),
-			sanitizeLogValue(jobType),
-			sanitizeLogValue(source),
-			sanitizeLogValue(target),
-			sanitizeLogValue(credentialMethod),
+			"restore_run=parallel concurrency=%d",
+			concurrency,
 		))
 
-		result := "success"
-		errorMessage := ""
-		backupFile := ""
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		slots := make(chan struct{}, concurrency)
 
-		if err := checker.Validate(job); err != nil {
-			result = "failure"
-			errorMessage = err.Error()
-
-			logger.Error(fmt.Sprintf(
-				"job=%s type=%s result=failure reason=safety_validation_failed error=%s",
-				sanitizeLogValue(jobName),
-				sanitizeLogValue(jobType),
-				sanitizeLogValue(errorMessage),
-			))
-		}
-
-		if result == "success" {
-			if err := checker.Confirm(job, opts.DryRun); err != nil {
-				result = "failure"
-				errorMessage = err.Error()
-
-				logger.Error(fmt.Sprintf(
-					"job=%s type=%s result=failure reason=confirmation_failed error=%s",
-					sanitizeLogValue(jobName),
-					sanitizeLogValue(jobType),
-					sanitizeLogValue(errorMessage),
-				))
+		for _, job := range jobs {
+			if skip := logDisabledJob(logger, job); skip {
+				continue
 			}
-		}
 
-		if result == "success" {
-			if job.UsesBackupFile() {
-				backupFile, err = resolver.Latest(job)
-				if err != nil {
-					result = "failure"
-					errorMessage = err.Error()
+			// Stop dispatching new jobs once the run is cancelled. Jobs
+			// already in flight observe the same cancelled context and
+			// wind down on their own.
+			if err := ctx.Err(); err != nil {
+				mu.Lock()
+				cancelled = true
+				mu.Unlock()
 
-					logger.Error(fmt.Sprintf(
-						"job=%s type=%s result=failure reason=no_backup_file dry_run=%v error=%s",
-						sanitizeLogValue(jobName),
-						sanitizeLogValue(jobType),
-						opts.DryRun,
-						sanitizeLogValue(errorMessage),
-					))
-				} else {
-					backupFile = strings.TrimSpace(backupFile)
+				logger.Warn(fmt.Sprintf(
+					"restore_run=context_cancelled action=stop_dispatching error=%s",
+					sanitizeLogValue(err.Error()),
+				))
+				break
+			}
 
-					if backupFile == "" {
-						result = "failure"
-						errorMessage = "backup resolver returned an empty backup file path"
+			processedJobs++
+			wg.Add(1)
+			slots <- struct{}{}
 
-						logger.Error(fmt.Sprintf(
-							"job=%s type=%s result=failure reason=empty_backup_file",
-							sanitizeLogValue(jobName),
-							sanitizeLogValue(jobType),
-						))
-					} else {
-						logger.Info(fmt.Sprintf(
-							"job=%s type=%s selected_backup=%s",
-							sanitizeLogValue(jobName),
-							sanitizeLogValue(jobType),
-							sanitizeLogValue(backupFile),
-						))
-					}
+			go func(job config.JobConfig) {
+				defer wg.Done()
+				defer func() { <-slots }()
+
+				outcome := eng.runJob(ctx, job)
+
+				mu.Lock()
+				if outcome.failed {
+					failures++
 				}
-			} else {
-				providerName := restoreProviderName(jobType)
-
-				logger.Info(fmt.Sprintf(
-					"job=%s type=%s selected_backup=not_applicable restore_provider=%s",
-					sanitizeLogValue(jobName),
-					sanitizeLogValue(jobType),
-					sanitizeLogValue(providerName),
-				))
-			}
-		}
-
-		if result == "success" {
-			if err := jobCtx.Err(); err != nil {
-				result = "failure"
-				errorMessage = err.Error()
-
-				// A per-job timeout fails only this job. The run is marked
-				// cancelled only when the parent context itself is done.
-				reason := "job_timeout_before_restore"
-				if ctx.Err() != nil {
+				if outcome.cancelled {
 					cancelled = true
-					reason = "context_cancelled_before_restore"
 				}
-
-				logger.Error(fmt.Sprintf(
-					"job=%s type=%s result=failure reason=%s error=%s",
-					sanitizeLogValue(jobName),
-					sanitizeLogValue(jobType),
-					reason,
-					sanitizeLogValue(errorMessage),
-				))
-			}
+				mu.Unlock()
+			}(job)
 		}
 
-		if result == "success" {
-			provider, providerErr := restore.ProviderFor(jobType, logger)
-			if providerErr != nil {
-				result = "failure"
-				errorMessage = providerErr.Error()
-
-				logger.Error(fmt.Sprintf(
-					"job=%s type=%s result=failure reason=provider_not_available error=%s",
-					sanitizeLogValue(jobName),
-					sanitizeLogValue(jobType),
-					sanitizeLogValue(errorMessage),
-				))
-			} else {
-				logger.Info(fmt.Sprintf(
-					"job=%s type=%s restore_provider=%T",
-					sanitizeLogValue(jobName),
-					sanitizeLogValue(jobType),
-					provider,
-				))
-
-				restoreErr := provider.Restore(
-					jobCtx,
-					cfg,
-					job,
-					restore.Options{
-						DryRun:     opts.DryRun,
-						BackupFile: backupFile,
-					},
-				)
-
-				if restoreErr != nil {
-					result = "failure"
-					errorMessage = restoreErr.Error()
-
-					logger.Error(fmt.Sprintf(
-						"job=%s type=%s result=failure reason=restore_failed error=%s",
-						sanitizeLogValue(jobName),
-						sanitizeLogValue(jobType),
-						sanitizeLogValue(errorMessage),
-					))
-				}
-			}
-		}
-
-		jobCancel()
-
-		finished := time.Now()
-		duration := finished.Sub(started)
-
-		if result != "success" {
-			failures++
-
-			logger.Error(fmt.Sprintf(
-				"job=%s type=%s status=end result=failure dry_run=%v duration=%s error=%s",
-				sanitizeLogValue(jobName),
-				sanitizeLogValue(jobType),
-				opts.DryRun,
-				duration.Round(time.Millisecond),
-				sanitizeLogValue(errorMessage),
-			))
-		} else if opts.DryRun {
-			logger.Success(fmt.Sprintf(
-				"job=%s type=%s status=end result=success dry_run=true duration=%s",
-				sanitizeLogValue(jobName),
-				sanitizeLogValue(jobType),
-				duration.Round(time.Millisecond),
-			))
-		} else {
-			logger.Success(fmt.Sprintf(
-				"job=%s type=%s status=end result=success dry_run=false duration=%s",
-				sanitizeLogValue(jobName),
-				sanitizeLogValue(jobType),
-				duration.Round(time.Millisecond),
-			))
-		}
-
-		alertManager.Notify(ctx, alerts.Event{
-			JobName:     jobName,
-			JobType:     jobType,
-			Source:      source,
-			Target:      target,
-			Result:      result,
-			DryRun:      opts.DryRun,
-			Error:       errorMessage,
-			StartedAt:   started,
-			FinishedAt:  finished,
-			Duration:    duration,
-			Host:        host,
-			MainLogFile: logger.FilePath(),
-			ProviderLog: restore.ProviderLog(job),
-		})
-
-		if err := ctx.Err(); err != nil {
-			cancelled = true
-
-			logger.Warn(fmt.Sprintf(
-				"restore_run=context_cancelled action=stop_remaining_jobs error=%s",
-				sanitizeLogValue(err.Error()),
-			))
-			break
-		}
+		wg.Wait()
 	}
 
 	logger.Info(fmt.Sprintf(
@@ -397,6 +239,290 @@ func RunRestore(ctx context.Context, opts RestoreOptions) int {
 	}
 
 	return 0
+}
+
+// restoreEngine holds the shared, read-only dependencies used to run a single
+// job. Its methods carry no mutable run-level state, so runJob is safe to call
+// concurrently from multiple workers.
+type restoreEngine struct {
+	logger       *logging.Logger
+	cfg          config.Config
+	opts         RestoreOptions
+	resolver     backup.Resolver
+	checker      safety.Checker
+	alertManager alerts.Manager
+	host         string
+}
+
+// jobOutcome reports the result of a single job back to the driver, which owns
+// the run-level counters.
+type jobOutcome struct {
+	failed    bool
+	cancelled bool
+}
+
+// logDisabledJob logs and reports whether a job should be skipped because it is
+// disabled. Returns true when the caller should skip the job.
+func logDisabledJob(logger *logging.Logger, job config.JobConfig) bool {
+	if job.IsEnabled() {
+		return false
+	}
+
+	logger.Info(fmt.Sprintf(
+		"job=%s type=%s enabled=false action=skip",
+		sanitizeLogValue(strings.TrimSpace(job.Name)),
+		sanitizeLogValue(strings.TrimSpace(job.TypeName())),
+	))
+
+	return true
+}
+
+// runJob executes one restore job end to end: it derives the per-job timeout
+// context, runs safety checks, resolves the backup, invokes the provider, logs
+// the outcome, and fires the completion alert. It mutates no shared state.
+func (e restoreEngine) runJob(ctx context.Context, job config.JobConfig) jobOutcome {
+	logger := e.logger
+	opts := e.opts
+
+	jobName := strings.TrimSpace(job.Name)
+	jobType := strings.TrimSpace(job.TypeName())
+
+	outcome := jobOutcome{}
+
+	jobCtx := ctx
+	jobCancel := func() {}
+
+	if d, ok := job.JobTimeout(); ok {
+		var derived context.CancelFunc
+		jobCtx, derived = context.WithTimeout(ctx, d)
+		jobCancel = derived
+
+		logger.Info(fmt.Sprintf(
+			"job=%s type=%s timeout=%s source=config",
+			sanitizeLogValue(jobName),
+			sanitizeLogValue(jobType),
+			d,
+		))
+	} else if opts.Timeout > 0 {
+		var derived context.CancelFunc
+		jobCtx, derived = context.WithTimeout(ctx, opts.Timeout)
+		jobCancel = derived
+
+		logger.Info(fmt.Sprintf(
+			"job=%s type=%s timeout=%s source=cli_default",
+			sanitizeLogValue(jobName),
+			sanitizeLogValue(jobType),
+			opts.Timeout,
+		))
+	}
+
+	started := time.Now()
+	source := job.SourceText()
+	target := job.TargetText()
+	credentialMethod := job.CredentialMethod()
+
+	logger.Info(fmt.Sprintf(
+		"job=%s type=%s source_database=%s target=%s credential_method=%s status=start",
+		sanitizeLogValue(jobName),
+		sanitizeLogValue(jobType),
+		sanitizeLogValue(source),
+		sanitizeLogValue(target),
+		sanitizeLogValue(credentialMethod),
+	))
+
+	result := "success"
+	errorMessage := ""
+	backupFile := ""
+
+	if err := e.checker.Validate(job); err != nil {
+		result = "failure"
+		errorMessage = err.Error()
+
+		logger.Error(fmt.Sprintf(
+			"job=%s type=%s result=failure reason=safety_validation_failed error=%s",
+			sanitizeLogValue(jobName),
+			sanitizeLogValue(jobType),
+			sanitizeLogValue(errorMessage),
+		))
+	}
+
+	if result == "success" {
+		if err := e.checker.Confirm(job, opts.DryRun); err != nil {
+			result = "failure"
+			errorMessage = err.Error()
+
+			logger.Error(fmt.Sprintf(
+				"job=%s type=%s result=failure reason=confirmation_failed error=%s",
+				sanitizeLogValue(jobName),
+				sanitizeLogValue(jobType),
+				sanitizeLogValue(errorMessage),
+			))
+		}
+	}
+
+	if result == "success" {
+		if job.UsesBackupFile() {
+			resolved, err := e.resolver.Latest(job)
+			if err != nil {
+				result = "failure"
+				errorMessage = err.Error()
+
+				logger.Error(fmt.Sprintf(
+					"job=%s type=%s result=failure reason=no_backup_file dry_run=%v error=%s",
+					sanitizeLogValue(jobName),
+					sanitizeLogValue(jobType),
+					opts.DryRun,
+					sanitizeLogValue(errorMessage),
+				))
+			} else {
+				backupFile = strings.TrimSpace(resolved)
+
+				if backupFile == "" {
+					result = "failure"
+					errorMessage = "backup resolver returned an empty backup file path"
+
+					logger.Error(fmt.Sprintf(
+						"job=%s type=%s result=failure reason=empty_backup_file",
+						sanitizeLogValue(jobName),
+						sanitizeLogValue(jobType),
+					))
+				} else {
+					logger.Info(fmt.Sprintf(
+						"job=%s type=%s selected_backup=%s",
+						sanitizeLogValue(jobName),
+						sanitizeLogValue(jobType),
+						sanitizeLogValue(backupFile),
+					))
+				}
+			}
+		} else {
+			providerName := restoreProviderName(jobType)
+
+			logger.Info(fmt.Sprintf(
+				"job=%s type=%s selected_backup=not_applicable restore_provider=%s",
+				sanitizeLogValue(jobName),
+				sanitizeLogValue(jobType),
+				sanitizeLogValue(providerName),
+			))
+		}
+	}
+
+	if result == "success" {
+		if err := jobCtx.Err(); err != nil {
+			result = "failure"
+			errorMessage = err.Error()
+
+			// A per-job timeout fails only this job. The run is marked
+			// cancelled only when the parent context itself is done.
+			reason := "job_timeout_before_restore"
+			if ctx.Err() != nil {
+				outcome.cancelled = true
+				reason = "context_cancelled_before_restore"
+			}
+
+			logger.Error(fmt.Sprintf(
+				"job=%s type=%s result=failure reason=%s error=%s",
+				sanitizeLogValue(jobName),
+				sanitizeLogValue(jobType),
+				reason,
+				sanitizeLogValue(errorMessage),
+			))
+		}
+	}
+
+	if result == "success" {
+		provider, providerErr := restore.ProviderFor(jobType, logger)
+		if providerErr != nil {
+			result = "failure"
+			errorMessage = providerErr.Error()
+
+			logger.Error(fmt.Sprintf(
+				"job=%s type=%s result=failure reason=provider_not_available error=%s",
+				sanitizeLogValue(jobName),
+				sanitizeLogValue(jobType),
+				sanitizeLogValue(errorMessage),
+			))
+		} else {
+			logger.Info(fmt.Sprintf(
+				"job=%s type=%s restore_provider=%T",
+				sanitizeLogValue(jobName),
+				sanitizeLogValue(jobType),
+				provider,
+			))
+
+			restoreErr := provider.Restore(
+				jobCtx,
+				e.cfg,
+				job,
+				restore.Options{
+					DryRun:     opts.DryRun,
+					BackupFile: backupFile,
+				},
+			)
+
+			if restoreErr != nil {
+				result = "failure"
+				errorMessage = restoreErr.Error()
+
+				logger.Error(fmt.Sprintf(
+					"job=%s type=%s result=failure reason=restore_failed error=%s",
+					sanitizeLogValue(jobName),
+					sanitizeLogValue(jobType),
+					sanitizeLogValue(errorMessage),
+				))
+			}
+		}
+	}
+
+	jobCancel()
+
+	finished := time.Now()
+	duration := finished.Sub(started)
+
+	if result != "success" {
+		outcome.failed = true
+
+		logger.Error(fmt.Sprintf(
+			"job=%s type=%s status=end result=failure dry_run=%v duration=%s error=%s",
+			sanitizeLogValue(jobName),
+			sanitizeLogValue(jobType),
+			opts.DryRun,
+			duration.Round(time.Millisecond),
+			sanitizeLogValue(errorMessage),
+		))
+	} else if opts.DryRun {
+		logger.Success(fmt.Sprintf(
+			"job=%s type=%s status=end result=success dry_run=true duration=%s",
+			sanitizeLogValue(jobName),
+			sanitizeLogValue(jobType),
+			duration.Round(time.Millisecond),
+		))
+	} else {
+		logger.Success(fmt.Sprintf(
+			"job=%s type=%s status=end result=success dry_run=false duration=%s",
+			sanitizeLogValue(jobName),
+			sanitizeLogValue(jobType),
+			duration.Round(time.Millisecond),
+		))
+	}
+
+	e.alertManager.Notify(ctx, alerts.Event{
+		JobName:     jobName,
+		JobType:     jobType,
+		Source:      source,
+		Target:      target,
+		Result:      result,
+		DryRun:      opts.DryRun,
+		Error:       errorMessage,
+		StartedAt:   started,
+		FinishedAt:  finished,
+		Duration:    duration,
+		Host:        e.host,
+		MainLogFile: logger.FilePath(),
+		ProviderLog: restore.ProviderLog(job),
+	})
+
+	return outcome
 }
 
 func selectJobs(cfg config.Config, jobName string) ([]config.JobConfig, error) {

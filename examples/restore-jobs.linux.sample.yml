@@ -50,111 +50,115 @@ alerts:
     password_env: "DB_RESTORE_SMTP_PASSWORD"
     from_env: "DB_RESTORE_EMAIL_FROM"
     to:
-      - "it-team@company.com"
+    - "it-team@company.com"
 
 jobs:
-  - name: hris_postgres_restore
+- name: hris_postgres_restore
+  enabled: true
+  type: postgres
+  timeout: "2h"
+
+  backup_path: "/mnt/c/Projects/db-backups"
+  file_pattern: "*.sql"
+
+  schedule:
     enabled: true
-    type: postgres
+    linux_cron: "0 3 * * *"
 
-    backup_path: "/mnt/c/Projects/db-backups"
-    file_pattern: "*.sql"
+  target:
+    host: "localhost"
+    port: 5432
+    database: "hris_test"
+    username: "postgres"
+    maintenance_database: "postgres"
+    credential_method: "pgpass"
 
-    schedule:
-      enabled: true
-      linux_cron: "0 3 * * *"
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
 
-    target:
-      host: "localhost"
-      port: 5432
-      database: "hris_test"
-      username: "postgres"
-      maintenance_database: "postgres"
-      credential_method: "pgpass"
+- name: inventory_mysql_restore
+  enabled: false
+  type: mysql
+  timeout: "2h"
 
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
+  backup_path: "/mnt/c/Projects/db-backups"
+  file_pattern: "*.sql.gz"
 
-  - name: inventory_mysql_restore
+  schedule:
     enabled: false
-    type: mysql
+    linux_cron: "30 3 * * *"
 
-    backup_path: "/mnt/c/Projects/db-backups"
-    file_pattern: "*.sql.gz"
+  target:
+    host: "localhost"
+    port: 3306
+    database: "inventory_test"
+    username: "mysql_restore"
+    credential_method: "defaults_file"
 
-    schedule:
-      enabled: false
-      linux_cron: "30 3 * * *"
+    # This must be an actual file, not a directory.
+    # Create this file before enabling the MySQL job.
+    defaults_file: "/etc/db-restore-orchestrator/mysql.cnf"
 
-    target:
-      host: "localhost"
-      port: 3306
-      database: "inventory_test"
-      username: "mysql_restore"
-      credential_method: "defaults_file"
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
 
-      # This must be an actual file, not a directory.
-      # Create this file before enabling the MySQL job.
-      defaults_file: "/etc/db-restore-orchestrator/mysql.cnf"
+- name: accounting_oracle_restore
+  enabled: false
+  type: oracle
+  timeout: "2h"
 
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
+  backup_path: "/mnt/c/Projects/db-backups"
+  file_pattern: "*.dmp"
 
-  - name: accounting_oracle_restore
+  schedule:
     enabled: false
-    type: oracle
+    linux_cron: "0 4 * * *"
 
-    backup_path: "/mnt/c/Projects/db-backups"
-    file_pattern: "*.dmp"
+  target:
+    connect_string: "/@ACCOUNTING_TEST"
+    schema: "ACCOUNTING_TEST"
+    oracle_directory: "ORCH_DUMP_DIR"
+    credential_method: "oracle_wallet"
 
-    schedule:
-      enabled: false
-      linux_cron: "0 4 * * *"
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
 
-    target:
-      connect_string: "/@ACCOUNTING_TEST"
-      schema: "ACCOUNTING_TEST"
-      oracle_directory: "ORCH_DUMP_DIR"
-      credential_method: "oracle_wallet"
+- name: sales_rman_restore
+  # Oracle RMAN runs a DBA-approved command file; it does not use
+  # backup_path/file_pattern. Set enabled: true after the command_file,
+  # log_file directory, and oracle_home below exist on the Oracle host.
+  enabled: false
+  type: oracle_rman
+  timeout: "8h"
 
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
-
-  - name: sales_rman_restore
-    # Oracle RMAN runs a DBA-approved command file; it does not use
-    # backup_path/file_pattern. Set enabled: true after the command_file,
-    # log_file directory, and oracle_home below exist on the Oracle host.
+  schedule:
     enabled: false
-    type: oracle_rman
+    linux_cron: "0 2 * * *"
 
-    schedule:
-      enabled: false
-      linux_cron: "0 2 * * *"
+  rman:
+    target: "/" # OS authentication; use "/@TNS_ALIAS" for an Oracle Wallet
+    command_file: "/opt/db-restore-orchestrator/rman/restore_sales.rman"
+    log_file: "/opt/db-restore-orchestrator/logs/sales_rman.log"
+    credential_method: "os_auth"
+    oracle_home: "/u01/app/oracle/product/19c/dbhome_1"
+    oracle_sid: "SALESTST"
+    restore_scope: "full_database"
 
-    rman:
-      target: "/"                       # OS authentication; use "/@TNS_ALIAS" for an Oracle Wallet
-      command_file: "/opt/db-restore-orchestrator/rman/restore_sales.rman"
-      log_file: "/opt/db-restore-orchestrator/logs/sales_rman.log"
-      credential_method: "os_auth"
-      oracle_home: "/u01/app/oracle/product/19c/dbhome_1"
-      oracle_sid: "SALESTST"
-      restore_scope: "full_database"
-
-    safety:
-      require_confirmation: false
-      block_if_name_contains:
-        - "prod"
-        - "production"
-        - "live"
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
