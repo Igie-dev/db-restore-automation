@@ -32,6 +32,19 @@ Job names must match:
 
 File-based jobs require `backup_path` and `file_pattern`. RMAN and PowerProtect jobs do not use normal backup file lookup.
 
+### Optional per-job fields
+
+- `timeout`: a wall-clock ceiling for the job, written as a Go duration string (`"2h"`, `"90m"`, `"1h30m"`). When the restore exceeds it, the provider process is killed and the job is marked failed. Omit it for no limit. Set it comfortably *above* the longest legitimate restore — a value below the real duration kills a valid restore mid-flight (for `mssql_powerprotect` this can leave the target database in a `RESTORING` state). Validation rejects a non-positive or unparsable value. A per-job `timeout` overrides the `--timeout` CLI default, and it is the only runtime bound that applies to scheduled jobs, which do not receive CLI flags.
+
+```yaml
+jobs:
+  - name: WideWorldImportersRestore
+    enabled: true
+    type: mssql_powerprotect
+    timeout: "6h"
+    # ...
+```
+
 ## Provider Notes
 
 PostgreSQL jobs use `pgpass` and restore `.sql`, `.dump`, or `.backup` files.

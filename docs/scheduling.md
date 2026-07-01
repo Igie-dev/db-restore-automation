@@ -26,4 +26,7 @@ Generate Task Scheduler commands:
 
 Run the generated commands from an elevated PowerShell session when required by your environment.
 
-Scheduled jobs call the Go executable with `restore --config ... --job ...`.
+Scheduled jobs call the Go executable with `restore --config ... --job ...` — one task per job, with no `--timeout` or `--concurrency` flags. Two consequences:
+
+- To bound a scheduled job's runtime, set the per-job `timeout:` field in the YAML. The CLI `--timeout` flag is not part of the generated command and never reaches scheduled runs.
+- `--concurrency` does not apply: each job is its own cron entry / scheduled task. If you schedule two jobs at the same time, the OS runs them concurrently with no built-in cap — stagger their times if they share infrastructure (for example a single Data Domain appliance).

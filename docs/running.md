@@ -144,6 +144,19 @@ All enabled jobs:
 ./db-restore-automation restore --config ./config/restore-jobs.linux.yml
 ```
 
+### Bounding runtime and running jobs in parallel
+
+Add `--timeout` to cap each job, and `--concurrency` to restore several jobs at once so a slow or hung job does not block the rest:
+
+```bash
+./db-restore-automation restore \
+  --config ./config/restore-jobs.linux.yml \
+  --timeout 2h \
+  --concurrency 2
+```
+
+`--timeout` applies only to jobs that have no `timeout:` in their config (per-job config wins). `--concurrency 1` (the default) runs jobs one at a time. Both flags apply to the manual `restore` command only — scheduled runs rely on the per-job `timeout:` field. See [configuration.md](configuration.md) and [scheduling.md](scheduling.md).
+
 ## 9. Generate Schedules
 
 Linux:

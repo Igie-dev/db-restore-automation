@@ -17,6 +17,23 @@ db-restore-automation schedule linux --config ./config/restore-jobs.linux.yml --
 .\db-restore-automation.exe schedule windows --config .\config\restore-jobs.windows.yml --root-dir C:\db-restore-automation
 ```
 
+## Restore Options
+
+The `restore` command accepts these optional flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--job <name>` | all jobs | Restore only the named job. Omit to run every enabled job. |
+| `--dry-run` | off | Validate and log actions without executing provider commands. |
+| `--timeout <duration>` | `0` (none) | Default per-job wall-clock timeout for jobs that have no `timeout:` in their config. Go duration syntax (`2h`, `90m`, `1h30m`). A per-job `timeout:` always takes precedence. |
+| `--concurrency <n>` | `1` | Maximum number of jobs to restore at the same time. `1` is strictly sequential; a higher value runs a bounded worker pool so a slow or hung job does not block the others. Only affects runs that cover multiple jobs (i.e. without `--job`). |
+
+### Timeouts
+
+A timeout is a per-job wall-clock ceiling. When a job exceeds it, the running provider process is killed, the job is marked failed, and the run continues with the next job. Set it *above* the longest legitimate restore — a value below the real duration kills a valid restore mid-flight. Resolution order: per-job `timeout:` in YAML → `--timeout` flag → no limit.
+
+Scheduled runs never receive `--timeout` or `--concurrency`: the generated cron / Task Scheduler command is `restore --config ... --job ...` with no extra flags, so the per-job `timeout:` field is the only way to bound a scheduled job. See [scheduling.md](scheduling.md).
+
 ## Step-by-Step
 
 1. Install Go 1.22 or newer.
@@ -85,11 +102,11 @@ db-restore-automation schedule linux --config ./config/restore-jobs.linux.yml --
 
 1. Load YAML.
 2. Validate config and safety rules.
-3. Select one job with `--job`, or all jobs when omitted.
+3. Select one job with `--job`, or all jobs when omitted. When multiple jobs run, `--concurrency` controls how many execute at once.
 4. Skip disabled jobs.
 5. Resolve the latest backup file for file-based providers.
 6. Skip backup resolution for `oracle_rman` and `mssql_powerprotect`.
-7. Run the selected provider, or log the provider actions when `--dry-run` is set.
+7. Run the selected provider under the job's timeout context (per-job `timeout:` or `--timeout`), or log the provider actions when `--dry-run` is set.
 8. Log result, duration, stdout/stderr capture paths, and provider logs where available.
 9. Send configured alerts after each selected enabled job.
 

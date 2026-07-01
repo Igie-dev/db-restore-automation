@@ -129,7 +129,9 @@ db-restore-automation validate --config <config-file>
 db-restore-automation restore \
   --config <config-file> \
   [--job <job-name>] \
-  [--dry-run]
+  [--dry-run] \
+  [--timeout <duration>] \
+  [--concurrency <n>]
 
 db-restore-automation schedule linux \
   --config <config-file> \
@@ -281,7 +283,16 @@ Omit `--job`:
 
 The CLI continues with later selected jobs after an individual job failure. It stops starting new jobs when the process is cancelled.
 
-Running all jobs can be dangerous when jobs target the same database server or share restore resources. Prefer running and verifying one job at a time.
+By default all jobs run sequentially — one job must finish (or hit its timeout) before the next starts. To restore several at once so a slow or hung job does not block the rest, add `--concurrency <n>` (a bounded worker pool). Add `--timeout <duration>` to cap any job that lacks its own `timeout:` field:
+
+```powershell
+.\db-restore-automation.exe restore `
+  --config .\config\restore-jobs.windows.yml `
+  --timeout 6h `
+  --concurrency 2
+```
+
+Running all jobs can be dangerous when jobs target the same database server or share restore resources. Prefer running and verifying one job at a time, and keep `--concurrency` low when jobs share infrastructure such as a single Data Domain appliance.
 
 ### Monitor the application log
 
