@@ -334,13 +334,55 @@ func RunScheduleWindows(
 			frequency = "DAILY"
 		}
 
-		// The current configuration only provides a time and frequency.
-		// Weekly and monthly schedules require additional fields such as
-		// day-of-week or day-of-month, so only DAILY is safe to generate.
-		if frequency != "DAILY" {
+		// DAILY and MONTHLY are supported. New-ScheduledTaskTrigger has no
+		// monthly option, so a MONTHLY schedule builds a CIM monthly trigger.
+		var triggerLines []string
+
+		switch frequency {
+		case "DAILY":
+			triggerLines = []string{
+				fmt.Sprintf(
+					"$taskTrigger = New-ScheduledTaskTrigger -Daily -At '%s'",
+					psQuote(normalizedTime),
+				),
+			}
+
+		case "MONTHLY":
+			day := job.Schedule.DayOfMonth
+			if day < 1 || day > 31 {
+				fmt.Fprintf(
+					os.Stderr,
+					"schedule_windows=invalid_day_of_month job=%s day_of_month=%d error=MONTHLY requires day_of_month between 1 and 31\n",
+					scheduleSingleLine(jobName),
+					day,
+				)
+				return 2
+			}
+
+			// MSFT_TaskMonthlyTrigger.DaysOfMonth is a bitmask: day N sets
+			// bit N-1 (day 1 => 1, day 2 => 2, day 3 => 4, ...).
+			daysOfMonthMask := 1 << (uint(day) - 1)
+
+			triggerLines = []string{
+				"$taskTrigger = New-CimInstance `",
+				"    -CimClass (Get-CimClass -Namespace 'Root/Microsoft/Windows/TaskScheduler' -ClassName 'MSFT_TaskMonthlyTrigger') `",
+				"    -ClientOnly",
+				fmt.Sprintf(
+					"$taskTrigger.DaysOfMonth = %d  # day-of-month %d",
+					daysOfMonthMask,
+					day,
+				),
+				fmt.Sprintf(
+					"$taskTrigger.StartBoundary = ([DateTime]'%s').ToString('s')",
+					psQuote(normalizedTime),
+				),
+				"$taskTrigger.Enabled = $true",
+			}
+
+		default:
 			fmt.Fprintf(
 				os.Stderr,
-				"schedule_windows=unsupported_frequency job=%s frequency=%s error=only DAILY is supported by the current schedule configuration\n",
+				"schedule_windows=unsupported_frequency job=%s frequency=%s error=only DAILY and MONTHLY are supported\n",
 				scheduleSingleLine(jobName),
 				scheduleSingleLine(frequency),
 			)
@@ -391,10 +433,12 @@ func RunScheduleWindows(
 			"    -Argument $taskArguments `",
 			"    -WorkingDirectory $workingDirectory",
 			"",
-			fmt.Sprintf(
-				"$taskTrigger = New-ScheduledTaskTrigger -Daily -At '%s'",
-				psQuote(normalizedTime),
-			),
+		}
+
+		lines = append(lines, triggerLines...)
+
+		lines = append(
+			lines,
 			"",
 			"Register-ScheduledTask `",
 			"    -TaskName $taskName `",
@@ -405,7 +449,7 @@ func RunScheduleWindows(
 			"    -Force | Out-Null",
 			"",
 			"Write-Host \"Created scheduled task: $taskName\"",
-		}
+		)
 
 		for _, line := range lines {
 			if err := scheduleWriteLine(out, line); err != nil {

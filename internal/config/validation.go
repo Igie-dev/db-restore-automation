@@ -849,14 +849,35 @@ func validateSchedule(
 		windowsFrequency = "DAILY"
 	}
 
-	// The generated PowerShell scheduler currently creates daily triggers.
-	// Weekly and monthly schedules require additional configuration such as
-	// a day of week or day of month.
-	if windowsFrequency != "DAILY" {
+	// The generated PowerShell scheduler supports daily and monthly triggers.
+	switch windowsFrequency {
+	case "DAILY":
+		if schedule.DayOfMonth != 0 {
+			*validationErrors = append(
+				*validationErrors,
+				fmt.Sprintf(
+					"job=%q schedule.day_of_month only applies to windows_frequency=MONTHLY",
+					label,
+				),
+			)
+		}
+
+	case "MONTHLY":
+		if schedule.DayOfMonth < 1 || schedule.DayOfMonth > 31 {
+			*validationErrors = append(
+				*validationErrors,
+				fmt.Sprintf(
+					"job=%q schedule.windows_frequency=MONTHLY requires schedule.day_of_month between 1 and 31",
+					label,
+				),
+			)
+		}
+
+	default:
 		*validationErrors = append(
 			*validationErrors,
 			fmt.Sprintf(
-				"job=%q schedule.windows_frequency must be DAILY",
+				"job=%q schedule.windows_frequency must be DAILY or MONTHLY",
 				label,
 			),
 		)

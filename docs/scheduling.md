@@ -26,6 +26,20 @@ Generate Task Scheduler commands:
 
 Run the generated commands from an elevated PowerShell session when required by your environment.
 
+### Frequency
+
+`windows_frequency` is `DAILY` (default) or `MONTHLY`. For `MONTHLY`, add `day_of_month` (1–31); the generated script builds a `MSFT_TaskMonthlyTrigger`:
+
+```yaml
+schedule:
+  enabled: true
+  windows_time: "14:10"
+  windows_frequency: "MONTHLY"
+  day_of_month: 2
+```
+
+On Linux, express monthly timing directly in `linux_cron` (e.g. `10 14 2 * *`).
+
 Scheduled jobs call the Go executable with `restore --config ... --job ...` — one task per job, with no `--timeout` or `--concurrency` flags. Two consequences:
 
 - To bound a scheduled job's runtime, set the per-job `timeout:` field in the YAML. The CLI `--timeout` flag is not part of the generated command and never reaches scheduled runs.

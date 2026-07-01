@@ -109,6 +109,9 @@ type ScheduleConfig struct {
 	LinuxCron        string `yaml:"linux_cron"`
 	WindowsTime      string `yaml:"windows_time"`
 	WindowsFrequency string `yaml:"windows_frequency"`
+	// DayOfMonth is the day (1-31) a MONTHLY Windows schedule runs on. It is
+	// ignored for DAILY schedules and for Linux, which uses linux_cron.
+	DayOfMonth int `yaml:"day_of_month"`
 }
 
 type TargetConfig struct {

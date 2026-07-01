@@ -45,6 +45,26 @@ jobs:
     # ...
 ```
 
+### Schedule fields
+
+The `schedule` block drives the generated cron / Task Scheduler entries:
+
+- `enabled`: include the job in generated schedules.
+- `linux_cron`: a five-field cron expression for Linux (`schedule linux`). Express day-of-month directly here — e.g. `10 14 2 * *` runs at 14:10 on the 2nd.
+- `windows_time`: `HH:MM` 24-hour start time (Windows).
+- `windows_frequency`: `DAILY` (default) or `MONTHLY`.
+- `day_of_month`: required when `windows_frequency: MONTHLY`; the day of the month (1–31) the task runs. Only valid with `MONTHLY`. Days 29–31 do not fire in months that lack them.
+
+```yaml
+schedule:
+  enabled: true
+  windows_time: "14:10"
+  windows_frequency: "MONTHLY"
+  day_of_month: 2
+```
+
+A `MONTHLY` Windows schedule generates a `MSFT_TaskMonthlyTrigger` (via CIM) because `New-ScheduledTaskTrigger` has no monthly option; `DAILY` uses `New-ScheduledTaskTrigger -Daily`.
+
 ## Provider Notes
 
 PostgreSQL jobs use `pgpass` and restore `.sql`, `.dump`, or `.backup` files.
