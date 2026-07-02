@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"os"
@@ -335,8 +336,11 @@ func RunScheduleWindows(
 		}
 
 		// DAILY and MONTHLY are supported. New-ScheduledTaskTrigger has no
-		// monthly option, so a MONTHLY schedule builds a CIM monthly trigger.
+		// monthly option and Register-ScheduledTask rejects hand-built
+		// MSFT_TaskMonthlyTrigger CIM instances with "The parameter is
+		// incorrect" (0x80070057), so MONTHLY jobs register from task XML.
 		var triggerLines []string
+		isMonthly := false
 
 		switch frequency {
 		case "DAILY":
@@ -348,8 +352,7 @@ func RunScheduleWindows(
 			}
 
 		case "MONTHLY":
-			day := job.Schedule.DayOfMonth
-			if day < 1 || day > 31 {
+			if day := job.Schedule.DayOfMonth; day < 1 || day > 31 {
 				fmt.Fprintf(
 					os.Stderr,
 					"schedule_windows=invalid_day_of_month job=%s day_of_month=%d error=MONTHLY requires day_of_month between 1 and 31\n",
@@ -359,25 +362,7 @@ func RunScheduleWindows(
 				return 2
 			}
 
-			// MSFT_TaskMonthlyTrigger.DaysOfMonth is a bitmask: day N sets
-			// bit N-1 (day 1 => 1, day 2 => 2, day 3 => 4, ...).
-			daysOfMonthMask := 1 << (uint(day) - 1)
-
-			triggerLines = []string{
-				"$taskTrigger = New-CimInstance `",
-				"    -CimClass (Get-CimClass -Namespace 'Root/Microsoft/Windows/TaskScheduler' -ClassName 'MSFT_TaskMonthlyTrigger') `",
-				"    -ClientOnly",
-				fmt.Sprintf(
-					"$taskTrigger.DaysOfMonth = %d  # day-of-month %d",
-					daysOfMonthMask,
-					day,
-				),
-				fmt.Sprintf(
-					"$taskTrigger.StartBoundary = ([DateTime]'%s').ToString('s')",
-					psQuote(normalizedTime),
-				),
-				"$taskTrigger.Enabled = $true",
-			}
+			isMonthly = true
 
 		default:
 			fmt.Fprintf(
@@ -416,40 +401,54 @@ func RunScheduleWindows(
 			jobName,
 		)
 
-		lines := []string{
-			"",
-			fmt.Sprintf("# %s", scheduleComment(taskName)),
-			fmt.Sprintf("$taskName = '%s'", psQuote(taskName)),
-			fmt.Sprintf(
-				"$taskDescription = '%s'",
-				psQuote(description),
-			),
-			fmt.Sprintf(
-				"$taskArguments = '%s'",
-				psQuote(taskArguments),
-			),
-			"$taskAction = New-ScheduledTaskAction `",
-			"    -Execute $exePath `",
-			"    -Argument $taskArguments `",
-			"    -WorkingDirectory $workingDirectory",
-			"",
+		var lines []string
+
+		if isMonthly {
+			lines = windowsMonthlyTaskLines(
+				taskName,
+				description,
+				executablePath,
+				taskArguments,
+				normalizedRootDir,
+				normalizedTime,
+				job.Schedule.DayOfMonth,
+			)
+		} else {
+			lines = []string{
+				"",
+				fmt.Sprintf("# %s", scheduleComment(taskName)),
+				fmt.Sprintf("$taskName = '%s'", psQuote(taskName)),
+				fmt.Sprintf(
+					"$taskDescription = '%s'",
+					psQuote(description),
+				),
+				fmt.Sprintf(
+					"$taskArguments = '%s'",
+					psQuote(taskArguments),
+				),
+				"$taskAction = New-ScheduledTaskAction `",
+				"    -Execute $exePath `",
+				"    -Argument $taskArguments `",
+				"    -WorkingDirectory $workingDirectory",
+				"",
+			}
+
+			lines = append(lines, triggerLines...)
+
+			lines = append(
+				lines,
+				"",
+				"Register-ScheduledTask `",
+				"    -TaskName $taskName `",
+				"    -Description $taskDescription `",
+				"    -Action $taskAction `",
+				"    -Trigger $taskTrigger `",
+				"    -Settings $taskSettings `",
+				"    -Force | Out-Null",
+				"",
+				"Write-Host \"Created scheduled task: $taskName\"",
+			)
 		}
-
-		lines = append(lines, triggerLines...)
-
-		lines = append(
-			lines,
-			"",
-			"Register-ScheduledTask `",
-			"    -TaskName $taskName `",
-			"    -Description $taskDescription `",
-			"    -Action $taskAction `",
-			"    -Trigger $taskTrigger `",
-			"    -Settings $taskSettings `",
-			"    -Force | Out-Null",
-			"",
-			"Write-Host \"Created scheduled task: $taskName\"",
-		)
 
 		for _, line := range lines {
 			if err := scheduleWriteLine(out, line); err != nil {
@@ -470,6 +469,99 @@ func RunScheduleWindows(
 	}
 
 	return 0
+}
+
+// windowsMonthlyTaskLines emits a Register-ScheduledTask -Xml block. The task
+// XML mirrors the settings used for DAILY jobs (IgnoreNew, StartWhenAvailable)
+// and uses a CalendarTrigger/ScheduleByMonth trigger, the only monthly trigger
+// form Register-ScheduledTask reliably accepts. The {0} placeholder is filled
+// at script runtime by the -f operator so the start boundary resolves to the
+// installing machine's current date.
+func windowsMonthlyTaskLines(
+	taskName string,
+	description string,
+	executablePath string,
+	taskArguments string,
+	workingDirectory string,
+	normalizedTime string,
+	dayOfMonth int,
+) []string {
+	return []string{
+		"",
+		fmt.Sprintf("# %s", scheduleComment(taskName)),
+		fmt.Sprintf("$taskName = '%s'", psQuote(taskName)),
+		fmt.Sprintf(
+			"$taskStartBoundary = ([DateTime]'%s').ToString('s')",
+			psQuote(normalizedTime),
+		),
+		"$taskXml = @'",
+		`<?xml version="1.0" encoding="UTF-16"?>`,
+		`<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">`,
+		"  <RegistrationInfo>",
+		fmt.Sprintf(
+			"    <Description>%s</Description>",
+			windowsTaskXMLValue(description),
+		),
+		"  </RegistrationInfo>",
+		"  <Triggers>",
+		"    <CalendarTrigger>",
+		"      <StartBoundary>{0}</StartBoundary>",
+		"      <Enabled>true</Enabled>",
+		"      <ScheduleByMonth>",
+		"        <DaysOfMonth>",
+		fmt.Sprintf("          <Day>%d</Day>", dayOfMonth),
+		"        </DaysOfMonth>",
+		"        <Months>",
+		"          <January /><February /><March /><April /><May /><June />",
+		"          <July /><August /><September /><October /><November /><December />",
+		"        </Months>",
+		"      </ScheduleByMonth>",
+		"    </CalendarTrigger>",
+		"  </Triggers>",
+		"  <Settings>",
+		"    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+		"    <StartWhenAvailable>true</StartWhenAvailable>",
+		"    <Enabled>true</Enabled>",
+		"  </Settings>",
+		`  <Actions Context="Author">`,
+		"    <Exec>",
+		fmt.Sprintf(
+			"      <Command>%s</Command>",
+			windowsTaskXMLValue(executablePath),
+		),
+		fmt.Sprintf(
+			"      <Arguments>%s</Arguments>",
+			windowsTaskXMLValue(taskArguments),
+		),
+		fmt.Sprintf(
+			"      <WorkingDirectory>%s</WorkingDirectory>",
+			windowsTaskXMLValue(workingDirectory),
+		),
+		"    </Exec>",
+		"  </Actions>",
+		"</Task>",
+		"'@ -f $taskStartBoundary",
+		"",
+		"Register-ScheduledTask `",
+		"    -TaskName $taskName `",
+		"    -Xml $taskXml `",
+		"    -Force | Out-Null",
+		"",
+		"Write-Host \"Created scheduled task: $taskName\"",
+	}
+}
+
+// windowsTaskXMLValue escapes a value for embedding as XML text inside the
+// generated here-string. Braces are doubled because the here-string is passed
+// through the PowerShell -f format operator.
+func windowsTaskXMLValue(value string) string {
+	var escaped strings.Builder
+	// xml.EscapeText writing to a strings.Builder cannot fail.
+	_ = xml.EscapeText(&escaped, []byte(value))
+
+	result := strings.ReplaceAll(escaped.String(), "{", "{{")
+
+	return strings.ReplaceAll(result, "}", "}}")
 }
 
 func loadValidForSchedule(configPath string) (config.Config, error) {

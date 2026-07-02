@@ -1,0 +1,198 @@
+# Restore-only job configuration for Windows.
+#
+# Do not store database passwords in this file.
+# Use:
+#   - PostgreSQL pgpass.conf
+#   - MySQL login path or defaults file
+#   - Oracle Wallet
+#   - Dell PowerProtect lockbox
+#
+# PostgreSQL pgpass.conf is normally located at:
+#   %APPDATA%\postgresql\pgpass.conf
+#
+# MySQL login paths can be configured with:
+#   mysql_config_editor set --login-path=inventory_test ...
+
+tools:
+  postgres:
+    psql: "C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe"
+    pg_restore: "C:\\Program Files\\PostgreSQL\\18\\bin\\pg_restore.exe"
+    dropdb: "C:\\Program Files\\PostgreSQL\\18\\bin\\dropdb.exe"
+    createdb: "C:\\Program Files\\PostgreSQL\\18\\bin\\createdb.exe"
+
+  mysql:
+    # Replace with the full path if mysql.exe is not available in the
+    # PATH of the Windows Task Scheduler service account.
+    mysql: "mysql.exe"
+
+  mssql_powerprotect:
+    ddbmsqlrc: "C:\\Program Files\\DPSAPPS\\MSAPPAGENT\\bin\\ddbmsqlrc.exe"
+
+alerts:
+  enabled: false
+
+  notify_on:
+    success: true
+    failure: true
+    dry_run: false
+
+  slack:
+    enabled: false
+    webhook_url_env: "DB_RESTORE_SLACK_WEBHOOK_URL"
+
+  email:
+    enabled: false
+    smtp_host: "smtp.office365.com"
+    smtp_port: 587
+    username_env: "DB_RESTORE_SMTP_USERNAME"
+    password_env: "DB_RESTORE_SMTP_PASSWORD"
+    from_env: "DB_RESTORE_EMAIL_FROM"
+    to:
+    - "it-team@company.com"
+
+jobs:
+- name: WideWorldImportersRestore
+  enabled: true
+  type: mssql_powerprotect
+  timeout: "6h"
+
+  schedule:
+    enabled: true
+    windows_time: "14:12"
+    windows_frequency: "MONTHLY"
+    day_of_month: 2
+
+  powerprotect:
+    dd_host: "192.168.20.251"
+    dd_user: "sql-ppdm-user"
+    device_path: "/sql-ppdm-user/sample-device-path"
+    lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
+    client: "source-sql-server.domain.local"
+    skip_client_resolution: true
+    restore_type: "normal"
+    credential_method: "lockbox"
+
+  source:
+    database: "WideWorldImporters"
+
+  target:
+    database: "WideWorldImporters_Test"
+
+  relocate:
+  - logical_name: "WWI_InMemory_Data_1"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test_InMemory_Data_1"
+
+  - logical_name: "WWI_Log"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test.ldf"
+
+  - logical_name: "WWI_Primary"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test.mdf"
+
+  - logical_name: "WWI_UserData"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\WideWorldImporters_Test_UserData.ndf"
+
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
+
+- name: AdventureWorksRestore
+  enabled: true
+  type: mssql_powerprotect
+  timeout: "6h"
+
+  schedule:
+    enabled: true
+    windows_time: "14:12"
+    windows_frequency: "MONTHLY"
+    day_of_month: 2
+
+  powerprotect:
+    dd_host: "192.168.20.251"
+    dd_user: "sql-ppdm-user"
+    device_path: "/sql-ppdm-user/sample-device-path"
+    lockbox_path: "C:\\Program Files\\DPSAPPS\\common\\lockbox"
+    client: "source-sql-server.domain.local"
+    skip_client_resolution: true
+    restore_type: "normal"
+    credential_method: "lockbox"
+
+  source:
+    database: "AdventureWorks"
+
+  target:
+    database: "AdventureWorks_Test"
+
+  relocate:
+  - logical_name: "AdventureWorks"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test.mdf"
+
+  - logical_name: "AdventureWorks_log"
+    physical_path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.MSSQLSERVER\\MSSQL\\DATA\\AdventureWorks_Test_log.ldf"
+
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
+
+- name: hris_postgres_restore
+  enabled: true
+  type: postgres
+  timeout: "2h"
+
+  backup_path: "C:\\Projects\\db-backups"
+  file_pattern: "*.sql"
+
+  schedule:
+    enabled: true
+    windows_time: "14:12"
+    windows_frequency: "MONTHLY"
+    day_of_month: 2
+
+  target:
+    host: "localhost"
+    port: 5432
+    database: "hris_test"
+    username: "postgres"
+    maintenance_database: "postgres"
+    credential_method: "pgpass"
+
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
+
+- name: inventory_mysql_restore
+  enabled: true
+  type: mysql
+  timeout: "2h"
+
+  backup_path: "C:\\Projects\\db-backups\\mysql\\inventory"
+  file_pattern: "*.sql.gz"
+
+  schedule:
+    enabled: true
+    windows_time: "14:12"
+    windows_frequency: "MONTHLY"
+    day_of_month: 2
+
+  target:
+    host: "localhost"
+    port: 3306
+    database: "inventory_test"
+    username: "inventory_restore"
+    credential_method: "login_path"
+    login_path: "inventory_test"
+
+  safety:
+    require_confirmation: false
+    block_if_name_contains:
+    - "prod"
+    - "production"
+    - "live"
