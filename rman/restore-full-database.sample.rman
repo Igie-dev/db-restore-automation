@@ -1,13 +1,72 @@
-# Sample RMAN command file for db-restore-automation.
-# This file is intentionally not a complete production recovery runbook.
-# An Oracle DBA must review, approve, and replace this file with the exact
-# restore and recovery commands for the target database.
+# Full-database restore command file (SAMPLE)
+# Dell PowerProtect + RMAN using DD Boost (SBT_TAPE)
+#
+# This file is safe for repository use and contains example values only.
+# Replace placeholders with your environment-specific values before use.
+#
+# Example environment values:
+#   DB_NAME ............ SAMPLEDB
+#   DBID ............... 123456789
+#   SBT_LIBRARY ........ /path/to/rmanagent/lib/libddobk.so
+#   RMAN_AGENT_HOME .... /path/to/rmanagent
+#   BACKUP_HOST ........ backup-server.example.com
+#   STORAGE_UNIT ....... SAMPLE_STORAGE_UNIT
+#
+# Values that typically change per restore execution:
+#   - Controlfile backup piece handle
+#   - Restore timestamp or SCN (for point-in-time recovery)
+#
+# Preconditions:
+#   - Database instance started in NOMOUNT state
+#   - Intended for non-production restore targets
+#   - Verify ORACLE_SID and restore target before execution
+
+# Uncomment if the restore process should manage instance state.
+# Use carefully since FORCE will terminate running sessions.
+# STARTUP FORCE NOMOUNT;
+
+# Database identifier used when restoring without a mounted controlfile
+SET DBID 123456789;
 
 RUN {
-  # Example placeholders only:
-  # STARTUP NOMOUNT;
-  # RESTORE CONTROLFILE FROM AUTOBACKUP;
-  # ALTER DATABASE MOUNT;
-  # RESTORE DATABASE;
-  # RECOVER DATABASE;
+  ALLOCATE CHANNEL CH0 TYPE 'SBT_TAPE' TRACE 2 PARMS
+    'SBT_LIBRARY=/path/to/rmanagent/lib/libddobk.so,
+     ENV=(STORAGE_UNIT=SAMPLE_STORAGE_UNIT,
+     BACKUP_HOST=backup-server.example.com,
+     RMAN_AGENT_HOME=/path/to/rmanagent,
+     SCHEDULED_RESTORE=TRUE,
+     DDBOOST_COMPRESSED_RESTORE=TRUE)';
+
+  # Optional additional channel for parallel restore operations
+  ALLOCATE CHANNEL CH1 TYPE 'SBT_TAPE' TRACE 2 PARMS
+    'SBT_LIBRARY=/path/to/rmanagent/lib/libddobk.so,
+     ENV=(STORAGE_UNIT=SAMPLE_STORAGE_UNIT,
+     BACKUP_HOST=backup-server.example.com,
+     RMAN_AGENT_HOME=/path/to/rmanagent,
+     SCHEDULED_RESTORE=TRUE,
+     DDBOOST_COMPRESSED_RESTORE=TRUE)';
+
+  # Optional command identifier for session tracking
+  SET COMMAND ID TO 'db_restore_automation_sample';
+
+  # Optional point-in-time recovery
+  # SET UNTIL TIME "TO_DATE('01-JAN-2026 12:00:00','DD-MON-YYYY HH24:MI:SS')";
+
+  # Restore controlfile from autobackup
+  RESTORE CONTROLFILE FROM AUTOBACKUP MAXDAYS 7;
+
+  # Optional explicit controlfile backup handle
+  # RESTORE CONTROLFILE FROM './BACKUP_PATH/c-123456789-20260101-01';
+
+  ALTER DATABASE MOUNT;
+
+  # Full database restore and recovery
+  RESTORE DATABASE;
+  RECOVER DATABASE;
+
+  RELEASE CHANNEL CH0;
+  RELEASE CHANNEL CH1;
 }
+
+# Required after recovery using restored backup controlfiles
+ALTER DATABASE OPEN RESETLOGS;

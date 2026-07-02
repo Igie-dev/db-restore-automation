@@ -135,10 +135,10 @@ jobs:
     - "production"
     - "live"
 
-- name: sales_rman_restore
-  # Oracle RMAN runs a DBA-approved command file; it does not use
-  # backup_path/file_pattern. Set enabled: true after the command_file,
-  # log_file directory, and oracle_home below exist on the Oracle host.
+- name: sample_rman_restore
+
+  # Oracle RMAN executes a DBA-approved command file.
+  # Enable only after validating paths and Oracle configuration.
   enabled: false
   type: oracle_rman
   timeout: "8h"
@@ -148,16 +148,29 @@ jobs:
     linux_cron: "0 2 * * *"
 
   rman:
-    target: "/" # OS authentication; use "/@TNS_ALIAS" for an Oracle Wallet
-    command_file: "/opt/db-restore-orchestrator/rman/restore_sales.rman"
-    log_file: "/opt/db-restore-orchestrator/logs/sales_rman.log"
+    # OS authentication example.
+    # Alternative:
+    # target: "/@TNS_ALIAS" (for Oracle Wallet usage)
+    target: "/"
     credential_method: "os_auth"
-    oracle_home: "/u01/app/oracle/product/19c/dbhome_1"
-    oracle_sid: "SALESTST"
+
+    # Repository-safe sample paths
+    command_file: "/opt/db-restore-orchestrator/rman/restore-sample.rman"
+    log_file: "/opt/db-restore-orchestrator/logs/sample_rman.log"
+
+    # Example Oracle installation path
+    oracle_home: "/u01/app/oracle/product/12.x.x/dbhome_1"
+
+    # Example SID
+    oracle_sid: "SAMPLEDB"
+
+    # Supported values may vary depending on implementation
     restore_scope: "full_database"
 
   safety:
     require_confirmation: false
+
+    # Prevent accidental execution against production environments
     block_if_name_contains:
     - "prod"
     - "production"
