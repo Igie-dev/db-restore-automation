@@ -154,10 +154,19 @@ func RunScheduleLinux(
 		// Escape all percent signs in the generated command.
 		command = escapeCronPercents(command)
 
+		confirmationWarning := ""
+		if job.RequiresConfirmation() {
+			// Cron provides no interactive stdin, so this entry will fail at
+			// the confirmation step until the job opts out of it.
+			confirmationWarning = "# WARNING: this job requires interactive confirmation and will fail under cron.\n" +
+				"# Set safety.require_confirmation: false in the job configuration for approved unattended runs.\n"
+		}
+
 		if err := scheduleWritef(
 			out,
-			"\n# %s\n%s %s\n",
+			"\n# %s\n%s%s %s\n",
 			scheduleComment(jobName),
+			confirmationWarning,
 			cronExpression,
 			command,
 		); err != nil {

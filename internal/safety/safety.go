@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"db-restore-automation/internal/config"
 	"db-restore-automation/internal/logging"
@@ -131,6 +132,11 @@ func (c Checker) Confirm(
 			jobName,
 		)
 	}
+
+	// Parallel jobs share one stdin. Serialize the prompt-and-read sequence
+	// so one job cannot consume the answer typed for another.
+	confirmPromptMutex.Lock()
+	defer confirmPromptMutex.Unlock()
 
 	if _, err := fmt.Fprintf(
 		os.Stderr,
@@ -383,13 +389,36 @@ func deduplicateSafetyValues(
 	return result
 }
 
+// confirmPromptMutex serializes interactive confirmation prompts across
+// concurrently running jobs, which all read from the same stdin.
+var confirmPromptMutex sync.Mutex
+
 func interactive() bool {
 	info, err := os.Stdin.Stat()
 	if err != nil {
 		return false
 	}
 
-	return info.Mode()&os.ModeCharDevice != 0
+	if info.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+
+	// The null device (/dev/null on Linux, NUL on Windows) is a character
+	// device but not a terminal. Cron commonly attaches it as stdin, and
+	// treating it as interactive produces a misleading EOF error instead of
+	// the actionable non-interactive message.
+	nullDevice, err := os.Open(os.DevNull)
+	if err != nil {
+		return true
+	}
+	defer nullDevice.Close()
+
+	nullInfo, err := nullDevice.Stat()
+	if err != nil {
+		return true
+	}
+
+	return !os.SameFile(info, nullInfo)
 }
 
 func parseEnvironmentBoolean(

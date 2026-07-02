@@ -19,7 +19,7 @@ const rmanLogTailMaximumBytes = 2400
 
 type OracleRmanProvider struct {
 	Logger *logging.Logger
-	Runner shell.Runner
+	Runner CommandRunner
 }
 
 type rmanLogSnapshot struct {
@@ -97,9 +97,10 @@ func (p OracleRmanProvider) Restore(
 		)
 	}
 
-	if err := rmanValidateConnectionSpec(
+	if err := rmanValidateTargetSpec(
 		"rman.target",
 		target,
+		credentialMethod,
 	); err != nil {
 		return fmt.Errorf(
 			"job=%q %w",
@@ -117,6 +118,16 @@ func (p OracleRmanProvider) Restore(
 				"job=%q %w",
 				jobName,
 				err,
+			)
+		}
+
+		// The catalog connection has no OS-authentication equivalent, so the
+		// only way to authenticate without an interactive password prompt is
+		// an Oracle Wallet connect string.
+		if !rmanWalletConnectSpec(catalog) {
+			return fmt.Errorf(
+				"job=%q rman.catalog must use the Oracle Wallet form \"/@<tns_alias>\"; any other form prompts for a password and cannot run unattended",
+				jobName,
 			)
 		}
 	}
@@ -305,6 +316,17 @@ func (p OracleRmanProvider) Restore(
 	))
 
 	if opts.DryRun {
+		// Dry runs stay usable on hosts without an Oracle installation, but
+		// they should still surface a missing rman binary as a preflight
+		// warning instead of implying the real run would succeed.
+		if !shell.ExecutableAvailable(resolvedExecutable) {
+			p.logWarn(fmt.Sprintf(
+				"job=%s type=oracle_rman dry_run=true rman_executable_not_found=%s",
+				jobName,
+				resolvedExecutable,
+			))
+		}
+
 		p.logWarn(fmt.Sprintf(
 			"job=%s type=oracle_rman dry_run=true action=restore_skipped command_file=%s log_file=%s credential_method=%s restore_scope=%s",
 			jobName,
@@ -322,6 +344,13 @@ func (p OracleRmanProvider) Restore(
 			"job=%q Oracle RMAN restore cancelled before execution: %w",
 			jobName,
 			err,
+		)
+	}
+
+	if p.Runner == nil {
+		return fmt.Errorf(
+			"job=%q Oracle RMAN provider has no command runner configured",
+			jobName,
 		)
 	}
 
@@ -376,8 +405,6 @@ func (p OracleRmanProvider) Restore(
 		)
 	}
 
-	startedAt := time.Now()
-
 	result, runErr := p.Runner.Run(
 		ctx,
 		shell.Command{
@@ -404,7 +431,6 @@ func (p OracleRmanProvider) Restore(
 		logChanged = rmanLogWasUpdated(
 			beforeLog,
 			afterLog,
-			startedAt,
 		)
 	}
 
@@ -478,6 +504,51 @@ func (p OracleRmanProvider) Restore(
 	))
 
 	return nil
+}
+
+// rmanValidateTargetSpec enforces connect strings that can authenticate
+// without an interactive password prompt. RMAN reads passwords from stdin,
+// which this automation never provides, so any prompting connect string
+// fails at runtime with an unhelpful EOF error. os_auth uses the bequeath
+// connection "/", oracle_wallet uses "/@<tns_alias>".
+func rmanValidateTargetSpec(
+	field string,
+	value string,
+	credentialMethod string,
+) error {
+	if err := rmanValidateConnectionSpec(field, value); err != nil {
+		return err
+	}
+
+	if strings.EqualFold(
+		credentialMethod,
+		config.DefaultOracleRMANCredentialMethod,
+	) {
+		if value != "/" {
+			return fmt.Errorf(
+				"%s must be \"/\" for credential_method os_auth; got %q",
+				field,
+				value,
+			)
+		}
+
+		return nil
+	}
+
+	if !rmanWalletConnectSpec(value) {
+		return fmt.Errorf(
+			"%s must use the Oracle Wallet form \"/@<tns_alias>\" for credential_method oracle_wallet; got %q",
+			field,
+			value,
+		)
+	}
+
+	return nil
+}
+
+func rmanWalletConnectSpec(value string) bool {
+	return strings.HasPrefix(value, "/@") &&
+		strings.TrimSpace(value[2:]) != ""
 }
 
 func rmanValidateConnectionSpec(
@@ -927,7 +998,6 @@ func captureRMANLogSnapshot(
 func rmanLogWasUpdated(
 	before rmanLogSnapshot,
 	after rmanLogSnapshot,
-	startedAt time.Time,
 ) bool {
 	if !after.Exists {
 		return false
@@ -945,10 +1015,10 @@ func rmanLogWasUpdated(
 		return true
 	}
 
-	// This fallback helps on filesystems with coarse timestamp resolution.
-	return !after.ModifiedTime.Before(
-		startedAt.Add(-2 * time.Second),
-	)
+	// Size and modification time are both unchanged from the pre-execution
+	// snapshot, so there is no evidence RMAN wrote to this file. Reporting it
+	// as updated would log a stale tail as if it were this run's output.
+	return false
 }
 
 func tailTextFile(

@@ -248,25 +248,36 @@ func (r Runner) Run(
 	succeeded := combinedErr == nil &&
 		result.ExitCode == 0
 
-	statusValue := "failed"
 	if succeeded {
-		statusValue = "success"
+		// The tails above already captured the useful output. Keeping the
+		// capture files for successful runs only accumulates files in the
+		// temp directory, which is often RAM-backed tmpfs on Linux hosts
+		// running scheduled restores. Failed runs keep both files for
+		// diagnosis.
+		_ = os.Remove(stdoutPath)
+		_ = os.Remove(stderrPath)
+
+		result.StdoutFile = ""
+		result.StderrFile = ""
+
+		r.logInfo(fmt.Sprintf(
+			"command_category=%s status=success exit_code=%d duration=%s",
+			category,
+			result.ExitCode,
+			duration,
+		))
+
+		return result, nil
 	}
 
 	levelMessage := fmt.Sprintf(
-		"command_category=%s status=%s exit_code=%d stdout_file=%s stderr_file=%s duration=%s",
+		"command_category=%s status=failed exit_code=%d stdout_file=%s stderr_file=%s duration=%s",
 		category,
-		statusValue,
 		result.ExitCode,
 		result.StdoutFile,
 		result.StderrFile,
 		duration,
 	)
-
-	if succeeded {
-		r.logInfo(levelMessage)
-		return result, nil
-	}
 
 	r.logError(levelMessage)
 

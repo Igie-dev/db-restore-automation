@@ -25,6 +25,15 @@ type Provider interface {
 	) error
 }
 
+// CommandRunner abstracts shell.Runner so providers can be tested with a
+// fake runner that records the command instead of executing it.
+type CommandRunner interface {
+	Run(
+		ctx context.Context,
+		cmdSpec shell.Command,
+	) (shell.Result, error)
+}
+
 func ProviderFor(
 	jobType string,
 	logger *logging.Logger,

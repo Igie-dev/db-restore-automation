@@ -571,6 +571,54 @@ func validateOracleRMANJob(
 		)
 	}
 
+	// RMAN reads passwords from stdin, which the automation never provides,
+	// so only non-prompting connect strings can work: "/" for os_auth and
+	// "/@<tns_alias>" for oracle_wallet. Reject prompting forms here so the
+	// operator learns at validation time instead of at restore time.
+	target := strings.TrimSpace(job.RMAN.Target)
+	credentialMethod := job.CredentialMethod()
+
+	if target != "" {
+		switch {
+		case strings.EqualFold(
+			credentialMethod,
+			DefaultOracleRMANCredentialMethod,
+		):
+			if target != "/" {
+				*validationErrors = append(
+					*validationErrors,
+					fmt.Sprintf(
+						"job=%q rman.target must be \"/\" for credential_method os_auth",
+						label,
+					),
+				)
+			}
+
+		case strings.EqualFold(credentialMethod, "oracle_wallet"):
+			if !rmanWalletSpec(target) {
+				*validationErrors = append(
+					*validationErrors,
+					fmt.Sprintf(
+						"job=%q rman.target must use the Oracle Wallet form \"/@<tns_alias>\" for credential_method oracle_wallet",
+						label,
+					),
+				)
+			}
+		}
+	}
+
+	catalog := strings.TrimSpace(job.RMAN.Catalog)
+
+	if catalog != "" && !rmanWalletSpec(catalog) {
+		*validationErrors = append(
+			*validationErrors,
+			fmt.Sprintf(
+				"job=%q rman.catalog must use the Oracle Wallet form \"/@<tns_alias>\"; other forms prompt for a password and cannot run unattended",
+				label,
+			),
+		)
+	}
+
 	commandFile := strings.TrimSpace(job.RMAN.CommandFile)
 	logFile := strings.TrimSpace(job.RMAN.LogFile)
 
@@ -1254,6 +1302,11 @@ func oneOf(value string, allowed ...string) bool {
 	}
 
 	return false
+}
+
+func rmanWalletSpec(value string) bool {
+	return strings.HasPrefix(value, "/@") &&
+		strings.TrimSpace(value[2:]) != ""
 }
 
 func samePath(left string, right string) bool {
