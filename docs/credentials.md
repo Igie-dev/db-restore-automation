@@ -27,7 +27,13 @@ When `defaults_file` is used, the CLI passes it as `--defaults-extra-file`.
 
 Oracle Data Pump uses wallet-style connect strings such as `/@ACCOUNTING_TEST`.
 
-Oracle RMAN supports OS authentication with `target: "/"` or wallet-based target/catalog strings supplied by the DBA.
+Oracle RMAN accepts only connect strings that can never prompt for a password:
+
+- `credential_method: os_auth` requires `target: "/"` (bequeath connection as the OS user running the CLI).
+- `credential_method: oracle_wallet` requires `target: "/@<tns_alias>"`.
+- `rman.catalog`, when configured, must always be a wallet string (`/@<tns_alias>`) regardless of the credential method.
+
+Anything else — `user@alias`, `user/password@alias` — is rejected at `validate` time and again by the provider before RMAN is executed.
 
 ## Dell PowerProtect MSSQL
 

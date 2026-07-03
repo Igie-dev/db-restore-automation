@@ -22,9 +22,15 @@ Check for missing required fields, unsupported credential methods, invalid job n
 
 ## Restore Fails
 
-Check `logs/restore.log` first. External command stdout and stderr are captured into temp files and their paths are logged.
+Check `logs/restore.log` first. External command stdout and stderr are captured into temp files; when a command fails the files are kept and their paths are logged. Successful runs delete the capture files (a tail of the output is retained in the main log), so temp space does not grow across scheduled runs.
 
-For RMAN jobs, also check the configured `rman.log_file`.
+For RMAN jobs, also check the configured `rman.log_file` — the automation appends its tail to the main log after every execution.
+
+Common RMAN validation errors:
+
+- `rman.target must be "/" for credential_method os_auth` / `must use the Oracle Wallet form "/@<tns_alias>"` — the connect string would make RMAN prompt for a password, which unattended execution cannot answer. Use `/` (OS authentication) or `/@<alias>` (wallet).
+- `rman.catalog must use the Oracle Wallet form` — catalog connections always need a wallet; inline or prompted passwords are not supported.
+- `confirmation is required ... but stdin is not interactive` — a scheduled run hit the confirmation prompt. Set `safety.require_confirmation: false` on the job after review.
 
 ## Restore Hangs
 

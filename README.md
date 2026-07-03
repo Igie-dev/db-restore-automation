@@ -653,10 +653,18 @@ Only the dump filename is passed to `impdp`. The dump file must be available in 
 
 RMAN executes a DBA-approved command file.
 
-Supported credential methods:
+Supported credential methods and the connect strings they require:
 
-- `os_auth`
-- `oracle_wallet`
+| `credential_method` | `rman.target`     | `rman.catalog` (optional) |
+|---------------------|-------------------|---------------------------|
+| `os_auth`           | exactly `/`       | `/@<tns_alias>`           |
+| `oracle_wallet`     | `/@<tns_alias>`   | `/@<tns_alias>`           |
+
+Any other connect-string form (for example `user@alias` or
+`user/password@alias`) is rejected by `validate` and again at restore time.
+RMAN reads passwords from stdin, which the automation never provides, so a
+prompting connect string could only fail at run time with a confusing EOF
+error.
 
 Currently supported scope:
 
@@ -667,6 +675,25 @@ restore_scope: "full_database"
 RMAN command files must not contain passwords.
 
 Machines with no enabled RMAN jobs do not need the repository `rman` folder.
+
+### Command files and the controlfile bootstrap
+
+The repository `rman/` folder contains:
+
+- `restore-full-database.sample.rman` — the empty skeleton a DBA fills in.
+- `restore-hobs2pro-powerprotect.rman` — a complete full-database restore
+  through Dell PowerProtect DD Boost (`SBT_TAPE` channels) showing every
+  value in context.
+
+A full restore always starts by restoring the controlfile, because the
+controlfile is RMAN's own index of all backups — until it is back, RMAN has
+nothing to consult. Autobackup pieces have a predictable name,
+`c-<DBID>-<YYYYMMDD>-<sequence>`, so with `SET DBID` followed by
+`RESTORE CONTROLFILE FROM AUTOBACKUP` RMAN finds the newest piece itself and
+no per-run manual value is needed. After `ALTER DATABASE MOUNT`,
+`RESTORE DATABASE` and `RECOVER DATABASE` select the latest usable backups
+automatically from the records inside the restored controlfile, and the
+database is opened with `RESETLOGS`.
 
 ### Example RMAN job
 
@@ -707,6 +734,15 @@ jobs:
 
 The `target` and `command_file` / `log_file` paths must not contain inline
 passwords. `command_file` and `log_file` must resolve to different paths.
+
+A dry run (`--dry-run`) validates the command file, `oracle_home`, and log
+target without executing RMAN, and logs a warning when the `rman` binary
+cannot be found on the host — so a dry run on the Oracle server is a real
+preflight.
+
+For unattended (cron) execution, set `safety.require_confirmation: false` on
+the job: confirmation prompts cannot be answered without a terminal, and the
+generated crontab marks jobs that would block on one.
 
 ### Executable and library resolution (Linux)
 

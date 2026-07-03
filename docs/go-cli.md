@@ -107,7 +107,7 @@ Scheduled runs never receive `--timeout` or `--concurrency`: the generated cron 
 5. Resolve the latest backup file for file-based providers.
 6. Skip backup resolution for `oracle_rman` and `mssql_powerprotect`.
 7. Run the selected provider under the job's timeout context (per-job `timeout:` or `--timeout`), or log the provider actions when `--dry-run` is set.
-8. Log result, duration, stdout/stderr capture paths, and provider logs where available.
+8. Log result, duration, and provider logs where available. Stdout/stderr capture files are kept (and their paths logged) only when a command fails; successful runs delete them and keep a tail in the main log.
 9. Send configured alerts after each selected enabled job.
 
 ## Restore-Only Boundary

@@ -73,7 +73,7 @@ MySQL jobs use `login_path` or `defaults_file` and restore `.sql` or `.sql.gz` f
 
 Oracle Data Pump jobs use Oracle Wallet and `.dmp` files. The dump file name is passed to `impdp`; the file must exist in the server-side Oracle directory object path.
 
-Oracle RMAN jobs use `rman.command_file`. The command file must be reviewed and approved by an Oracle DBA.
+Oracle RMAN jobs use `rman.command_file`. The command file must be reviewed and approved by an Oracle DBA. Connect strings are strictly validated: `os_auth` requires `rman.target: "/"`, `oracle_wallet` requires `rman.target: "/@<tns_alias>"`, and `rman.catalog` (when set) must always be `/@<tns_alias>`. Forms that would make RMAN prompt for a password are rejected at validation time. See `rman/restore-hobs2pro-powerprotect.rman` for a complete command-file example including the controlfile autobackup bootstrap.
 
 Dell PowerProtect MSSQL jobs use `ddbmsqlrc.exe`, lockbox credentials, source/target database fields, and at least one relocation mapping.
 
